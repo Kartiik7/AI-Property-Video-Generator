@@ -17,6 +17,7 @@ class PropertyData:
     cta_text: str
     contact: str | None = None   # optional; warning if absent
     tagline: str | None = None   # optional; short headline
+    custom_script: dict | None = None  # optional; hand-written scripts
 
 
 @dataclass

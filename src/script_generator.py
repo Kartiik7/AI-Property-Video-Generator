@@ -262,6 +262,121 @@ def _build_cta_scene(prop: PropertyData) -> dict:
     }
 
 
+# ── Custom Script Validation ────────────────────────────────────────────────
+
+def _validate_custom_scene(
+    scene_label: str,
+    custom_entry: dict,
+    allowed_facts,
+) -> tuple[dict | None, list[str]]:
+    """Validate a custom caption and voiceover against formatting limits and facts."""
+    if not isinstance(custom_entry, dict):
+        return None, [f"Custom script for {scene_label} scene must be a JSON object with 'caption' and 'voiceover'."]
+
+    cap = custom_entry.get("caption")
+    vo = custom_entry.get("voiceover")
+    if not isinstance(cap, str) or not isinstance(vo, str):
+        return None, [f"Custom script for {scene_label} scene must have string 'caption' and 'voiceover'."]
+
+    problems: list[str] = []
+
+    # Check caption limits: max 2 lines, max 38 chars/line
+    cap_lines = cap.split("\n")
+    if len(cap_lines) > 2:
+        problems.append(f"caption has {len(cap_lines)} lines (max 2)")
+    for line_idx, line in enumerate(cap_lines, 1):
+        if len(line) > 38:
+            problems.append(f"caption line {line_idx} has {len(line)} chars (max 38)")
+    if not cap.strip():
+        problems.append("caption is empty")
+
+    # Check voiceover limits: max 18 words
+    vo_words = vo.split()
+    if len(vo_words) > 18:
+        problems.append(f"voiceover has {len(vo_words)} words (max 18)")
+    if len(vo_words) == 0:
+        problems.append("voiceover is empty")
+
+    # Fact check
+    ok_c, prob_c = check_text(cap, allowed_facts)
+    ok_v, prob_v = check_text(vo, allowed_facts)
+    for p in prob_c:
+        problems.append(f"caption fact check failed: {p}")
+    for p in prob_v:
+        problems.append(f"voiceover fact check failed: {p}")
+
+    if problems:
+        return None, problems
+
+    return {"caption": cap.strip(), "voiceover": vo.strip()}, []
+
+
+def _assign_scene_images(
+    scenes_data: list[dict],
+    images: list[Path],
+    warnings: list[str],
+) -> list[Path]:
+    """Assign images to scenes, supporting room-based ordering when available."""
+    total_scenes = len(scenes_data)
+    num_images = len(images)
+
+    if num_images == 0:
+        warnings.append("No images provided; placeholder paths used.")
+        return [Path(f"image_{i+1}.jpg") for i in range(total_scenes)]
+
+    if num_images < total_scenes:
+        warnings.append(
+            f"Only {num_images} image(s) available for {total_scenes} scenes; "
+            "images were reused."
+        )
+
+    # Check if images have recognizable room names (e.g. 1_kitchen.jpg, 1_bedroom.jpg, 1_frontal.jpg)
+    room_keys = ("kitchen", "bedroom", "bathroom", "bath", "bed", "frontal", "front", "exterior")
+    has_room_tags = any(
+        any(rk in img.stem.lower() for rk in room_keys)
+        for img in images
+    )
+
+    if not has_room_tags:
+        # Standard sequential assignment (Phase 2 default)
+        return [images[i % num_images] for i in range(total_scenes)]
+
+    # Helper to find matching image
+    def find_img(*keywords: str) -> Path | None:
+        for kw in keywords:
+            for img in images:
+                if kw in img.stem.lower():
+                    return img
+        return None
+
+    frontal_img = find_img("frontal", "front", "exterior", "elevation") or images[0]
+    kitchen_img = find_img("kitchen")
+    bedroom_img = find_img("bedroom", "bed")
+    bathroom_img = find_img("bathroom", "bath")
+
+    assigned: list[Path] = []
+    for i, s in enumerate(scenes_data):
+        stype = s["scene_type"]
+        if stype == "title":
+            assigned.append(frontal_img)
+        elif stype == "price_location" or stype == "cta":
+            assigned.append(frontal_img)
+        elif stype == "feature":
+            text = (s.get("caption", "") + " " + s.get("voiceover", "")).lower()
+            if "kitchen" in text and kitchen_img:
+                assigned.append(kitchen_img)
+            elif ("bedroom" in text or "bed" in text) and bedroom_img:
+                assigned.append(bedroom_img)
+            elif ("bathroom" in text or "bath" in text) and bathroom_img:
+                assigned.append(bathroom_img)
+            else:
+                assigned.append(images[i % num_images])
+        else:
+            assigned.append(images[i % num_images])
+
+    return assigned
+
+
 # ── Main Entry Point ───────────────────────────────────────────────────────
 
 def build_scene_plan(
@@ -271,8 +386,12 @@ def build_scene_plan(
 ) -> ScenePlan:
     """Build a complete ScenePlan from validated PropertyData and image paths.
 
-    If use_llm is True, attempts to enhance captions/voiceovers via OpenAI-compatible
-    endpoint. If LLM fails or is disabled, falls back to deterministic template mode.
+    If custom_script is present on PropertyData, each valid custom line replaces the
+    template text for that scene. If any custom line fails validation or fact-checking,
+    it falls back to the template text with a descriptive warning.
+
+    If use_llm is True (and no custom_script used), attempts to enhance captions/voiceovers
+    via OpenAI-compatible endpoint.
     """
     warnings: list[str] = []
 
@@ -293,10 +412,77 @@ def build_scene_plan(
     # CTA scene
     scenes_data.append(_build_cta_scene(prop))
 
+    allowed_facts = extract_allowed_facts(prop)
+
+    # ── 2. Apply optional custom_script ───────────────────────────────────
+    custom_scenes_count = 0
+    if prop.custom_script and isinstance(prop.custom_script, dict):
+        cs = prop.custom_script
+
+        # Title
+        if "title" in cs:
+            valid, problems = _validate_custom_scene("title", cs["title"], allowed_facts)
+            if valid:
+                scenes_data[0]["caption"] = valid["caption"]
+                scenes_data[0]["voiceover"] = valid["voiceover"]
+                custom_scenes_count += 1
+            else:
+                warnings.append(
+                    f"Custom script for title scene rejected: {'; '.join(problems)}. Using template text."
+                )
+
+        # Features
+        if "features" in cs and isinstance(cs["features"], list):
+            for f_idx, custom_feat in enumerate(cs["features"]):
+                scene_idx = 1 + f_idx
+                if scene_idx < 1 + len(grouped_feats):
+                    valid, problems = _validate_custom_scene(
+                        f"feature {f_idx + 1}", custom_feat, allowed_facts
+                    )
+                    if valid:
+                        scenes_data[scene_idx]["caption"] = valid["caption"]
+                        scenes_data[scene_idx]["voiceover"] = valid["voiceover"]
+                        custom_scenes_count += 1
+                    else:
+                        warnings.append(
+                            f"Custom script for feature {f_idx + 1} scene rejected: {'; '.join(problems)}. Using template text."
+                        )
+
+        # Price & Location
+        pl_idx = 1 + len(grouped_feats)
+        if "price_location" in cs:
+            valid, problems = _validate_custom_scene(
+                "price_location", cs["price_location"], allowed_facts
+            )
+            if valid:
+                scenes_data[pl_idx]["caption"] = valid["caption"]
+                scenes_data[pl_idx]["voiceover"] = valid["voiceover"]
+                custom_scenes_count += 1
+            else:
+                warnings.append(
+                    f"Custom script for price_location scene rejected: {'; '.join(problems)}. Using template text."
+                )
+
+        # CTA
+        cta_idx = pl_idx + 1
+        if "cta" in cs:
+            valid, problems = _validate_custom_scene("cta", cs["cta"], allowed_facts)
+            if valid:
+                scenes_data[cta_idx]["caption"] = valid["caption"]
+                scenes_data[cta_idx]["voiceover"] = valid["voiceover"]
+                custom_scenes_count += 1
+            else:
+                warnings.append(
+                    f"Custom script for cta scene rejected: {'; '.join(problems)}. Using template text."
+                )
+
+    if custom_scenes_count > 0:
+        warnings.append(f"Custom script used for {custom_scenes_count} scenes.")
+
     source = "template"
 
-    # ── 2. Optional LLM mode ──────────────────────────────────────────────
-    if use_llm:
+    # ── 3. Optional LLM mode (only if no custom script was used) ──────────
+    if use_llm and custom_scenes_count == 0:
         from src.llm_client import generate_scene_copy
         llm_scenes, llm_warnings = generate_scene_copy(prop, scenes_data)
         warnings.extend(llm_warnings)
@@ -304,28 +490,14 @@ def build_scene_plan(
             scenes_data = llm_scenes
             source = "llm"
 
-    # ── 3. Calculate durations ────────────────────────────────────────────
+    # ── 4. Calculate durations ────────────────────────────────────────────
     durations = calculate_durations(scenes_data)
 
-    # ── 4. Assign images ──────────────────────────────────────────────────
-    total_scenes = len(scenes_data)
-    num_images = len(images)
+    # ── 5. Assign images ──────────────────────────────────────────────────
+    assigned_images = _assign_scene_images(scenes_data, images, warnings)
 
-    if num_images == 0:
-        warnings.append("No images provided; placeholder paths used.")
-        assigned_images = [Path(f"image_{i+1}.jpg") for i in range(total_scenes)]
-    elif num_images < total_scenes:
-        warnings.append(
-            f"Only {num_images} image(s) available for {total_scenes} scenes; "
-            "images were reused."
-        )
-        assigned_images = [images[i % num_images] for i in range(total_scenes)]
-    else:
-        assigned_images = images[:total_scenes]
-
-    # ── 5. Assemble Scene objects ─────────────────────────────────────────
+    # ── 6. Assemble Scene objects ─────────────────────────────────────────
     final_scenes: list[Scene] = []
-    allowed_facts = extract_allowed_facts(prop)
 
     for i, data in enumerate(scenes_data):
         cap = wrap_caption(data["caption"])

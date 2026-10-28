@@ -157,6 +157,20 @@ def extract_allowed_facts(prop: PropertyData) -> AllowedFacts:
             lk = val // 100_000
             numbers.add(str(lk))
 
+        th = (val % 100_000) // 1_000
+        if th > 0:
+            numbers.add(str(th))
+
+        # Add Indian-formatted digit groups (e.g. '85', '00', '000', '1', '25')
+        s = str(val)
+        if len(s) > 3:
+            numbers.add(s[-3:])
+            rest = s[:-3]
+            while len(rest) > 2:
+                numbers.add(rest[-2:])
+                rest = rest[:-2]
+            numbers.add(rest)
+
     # Identify which known amenities are present in the input
     amenities: set[str] = set()
     for amenity in KNOWN_AMENITIES:

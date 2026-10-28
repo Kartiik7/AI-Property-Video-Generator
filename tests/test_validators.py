@@ -386,3 +386,17 @@ def test_mixed_extensions(tmp_path):
     assert errors == []
     assert len(paths) == 2
     assert any("c.bmp" in w for w in warnings)
+
+
+def test_custom_script_known_field_no_warning():
+    data = {
+        **VALID,
+        "custom_script": {
+            "title": {"caption": "Custom", "voiceover": "Custom VO"}
+        },
+    }
+    prop, warnings, errors = validate_property(data)
+    assert errors == []
+    assert not any("custom_script" in w for w in warnings)
+    assert prop.custom_script == data["custom_script"]
+

@@ -28,3 +28,5 @@ logs/
 
 # NOTE: input/ sample files are intentionally NOT ignored.
 #       Place property images in input/images/ for testing.
+input/Houses-dataset-master/
+

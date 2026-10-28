@@ -1,0 +1,29 @@
+{
+  "name": "Maple Residency",
+  "location": "Sector 150, Noida",
+  "price": 8500000,
+  "property_type": "Independent House",
+  "features": ["Spacious kitchen", "Comfortable bedroom", "Clean bathroom"],
+  "cta_text": "Book a site visit today",
+  "contact": "+91-00000-00000",
+  "tagline": "Where every room feels like home",
+  "custom_script": {
+    "title": {
+      "caption": "Maple Residency\nIndependent House",
+      "voiceover": "Welcome to Maple Residency, an independent house in Sector 150, Noida."
+    },
+    "features": [
+      {"caption": "Spacious kitchen", "voiceover": "Start your day in a spacious kitchen."},
+      {"caption": "Comfortable bedroom", "voiceover": "Unwind in a comfortable bedroom."},
+      {"caption": "Clean bathroom", "voiceover": "A clean bathroom completes the home."}
+    ],
+    "price_location": {
+      "caption": "₹85,00,000\nSector 150, Noida",
+      "voiceover": "Priced at 85 lakh rupees, in Sector 150, Noida."
+    },
+    "cta": {
+      "caption": "Book a site visit today\n+91-00000-00000",
+      "voiceover": "Book a site visit today. Contact details are on screen."
+    }
+  }
+}

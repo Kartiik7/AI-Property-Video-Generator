@@ -191,3 +191,164 @@ def test_deterministic_output():
         assert s1.voiceover == s2.voiceover
         assert s1.duration == s2.duration
         assert s1.image_path == s2.image_path
+
+
+# ── Custom Script Tests ────────────────────────────────────────────────────
+
+def _sample_custom_script() -> dict:
+    return {
+        "title": {
+            "caption": "Maple Residency\nIndependent House",
+            "voiceover": "Welcome to Maple Residency, an independent house in Sector 150, Noida.",
+        },
+        "features": [
+            {"caption": "Spacious kitchen", "voiceover": "Start your day in a spacious kitchen."},
+            {"caption": "Comfortable bedroom", "voiceover": "Unwind in a comfortable bedroom."},
+            {"caption": "Clean bathroom", "voiceover": "A clean bathroom completes the home."},
+        ],
+        "price_location": {
+            "caption": "₹85,00,000\nSector 150, Noida",
+            "voiceover": "Priced at 85 lakh rupees, in Sector 150, Noida.",
+        },
+        "cta": {
+            "caption": "Book a site visit today\n+91-00000-00000",
+            "voiceover": "Book a site visit today. Contact details are on screen.",
+        },
+    }
+
+
+def test_custom_script_used_when_valid():
+    prop = _make_prop(num_features=3, price="₹85,00,000")
+    prop.name = "Maple Residency"
+    prop.location = "Sector 150, Noida"
+    prop.property_type = "Independent House"
+    prop.features = ["Spacious kitchen", "Comfortable bedroom", "Clean bathroom"]
+    prop.cta_text = "Book a site visit today"
+    prop.contact = "+91-00000-00000"
+    prop.custom_script = _sample_custom_script()
+
+    images = [Path(f"img_{i}.jpg") for i in range(6)]
+    plan = build_scene_plan(prop, images)
+
+    assert plan.source == "template"
+    assert any("custom script used for 6 scenes" in w.lower() for w in plan.warnings)
+
+    # Check that custom lines were used
+    assert plan.scenes[0].caption == "Maple Residency\nIndependent House"
+    assert plan.scenes[0].voiceover == "Welcome to Maple Residency, an independent house in Sector 150, Noida."
+    assert plan.scenes[1].caption == "Spacious kitchen"
+    assert plan.scenes[1].voiceover == "Start your day in a spacious kitchen."
+    assert plan.scenes[4].caption == "₹85,00,000\nSector 150, Noida"
+    assert plan.scenes[4].voiceover == "Priced at 85 lakh rupees, in Sector 150, Noida."
+
+
+def test_invalid_custom_line_invented_number_falls_back_for_that_scene_only():
+    prop = _make_prop(num_features=3, price="₹85,00,000")
+    prop.name = "Maple Residency"
+    prop.location = "Sector 150, Noida"
+    prop.features = ["Spacious kitchen", "Comfortable bedroom", "Clean bathroom"]
+    prop.contact = "+91-00000-00000"
+    cs = _sample_custom_script()
+    # Invented number 9999
+    cs["title"]["voiceover"] = "Welcome to Maple Residency, just 9999 minutes from anywhere."
+    prop.custom_script = cs
+
+    images = [Path(f"img_{i}.jpg") for i in range(6)]
+    plan = build_scene_plan(prop, images)
+
+    # Title fell back to template text
+    assert "9999" not in plan.scenes[0].voiceover
+    assert any("title" in w.lower() and "rejected" in w.lower() for w in plan.warnings)
+
+    # Feature scenes still used custom lines
+    assert plan.scenes[1].caption == "Spacious kitchen"
+    assert plan.scenes[1].voiceover == "Start your day in a spacious kitchen."
+    assert any("custom script used for 5 scenes" in w.lower() for w in plan.warnings)
+
+
+def test_invalid_custom_line_banned_claim_falls_back_for_that_scene_only():
+    prop = _make_prop(num_features=3, price="₹85,00,000")
+    prop.name = "Maple Residency"
+    prop.location = "Sector 150, Noida"
+    prop.features = ["Spacious kitchen", "Comfortable bedroom", "Clean bathroom"]
+    prop.contact = "+91-00000-00000"
+    cs = _sample_custom_script()
+    # Banned promotional claim "luxury"
+    cs["price_location"]["voiceover"] = "Luxury living priced at 85 lakh rupees in Sector 150."
+    prop.custom_script = cs
+
+    images = [Path(f"img_{i}.jpg") for i in range(6)]
+    plan = build_scene_plan(prop, images)
+
+    # Price location fell back to template text
+    assert "luxury" not in plan.scenes[4].voiceover.lower()
+    assert any("price_location" in w.lower() and "rejected" in w.lower() for w in plan.warnings)
+
+    # Other scenes retained custom text
+    assert plan.scenes[0].caption == "Maple Residency\nIndependent House"
+    assert any("custom script used for 5 scenes" in w.lower() for w in plan.warnings)
+
+
+def test_custom_line_exceeding_limits_falls_back_for_that_scene_only():
+    prop = _make_prop(num_features=3, price="₹85,00,000")
+    prop.features = ["Spacious kitchen", "Comfortable bedroom", "Clean bathroom"]
+    prop.contact = "+91-00000-00000"
+    cs = _sample_custom_script()
+    # Voiceover exceeding 18 words
+    cs["features"][0]["voiceover"] = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen."
+    prop.custom_script = cs
+
+    images = [Path(f"img_{i}.jpg") for i in range(6)]
+    plan = build_scene_plan(prop, images)
+
+    assert any("feature 1" in w.lower() and "rejected" in w.lower() for w in plan.warnings)
+    # Feature 1 fell back to template
+    assert "one two three" not in plan.scenes[1].voiceover
+    # Feature 2 still custom
+    assert plan.scenes[2].caption == "Comfortable bedroom"
+
+
+
+def test_missing_custom_script_uses_template():
+    prop = _make_prop(num_features=3)
+    prop.custom_script = None
+
+    images = [Path(f"img_{i}.jpg") for i in range(6)]
+    plan = build_scene_plan(prop, images)
+
+    assert plan.source == "template"
+    assert not any("custom script used" in w.lower() for w in plan.warnings)
+
+
+def test_sample_files_load_and_generate_without_errors():
+    from src.input_loader import load_from_json
+
+    base = Path(__file__).resolve().parent.parent
+
+    # House 1
+    h1_json = base / "input" / "samples" / "house_1" / "property.json"
+    h1_images = base / "input" / "samples" / "house_1" / "images"
+    res1 = load_from_json(h1_json, h1_images)
+    assert res1.ok, f"House 1 failed loading: {res1.errors}"
+    assert res1.errors == []
+    plan1 = build_scene_plan(res1.property, res1.images)
+    assert any("custom script used for 6 scenes" in w.lower() for w in plan1.warnings)
+    # Verify room-based image assignment
+    assert plan1.scenes[0].image_path.name == "1_frontal.jpg"
+    assert plan1.scenes[1].image_path.name == "1_kitchen.jpg"
+    assert plan1.scenes[2].image_path.name == "1_bedroom.jpg"
+    assert plan1.scenes[3].image_path.name == "1_bathroom.jpg"
+
+    # House 2
+    h2_json = base / "input" / "samples" / "house_2" / "property.json"
+    h2_images = base / "input" / "samples" / "house_2" / "images"
+    res2 = load_from_json(h2_json, h2_images)
+    assert res2.ok, f"House 2 failed loading: {res2.errors}"
+    assert res2.errors == []
+    plan2 = build_scene_plan(res2.property, res2.images)
+    assert any("custom script used for 6 scenes" in w.lower() for w in plan2.warnings)
+    assert plan2.scenes[0].image_path.name == "2_frontal.jpg"
+    assert plan2.scenes[1].image_path.name == "2_kitchen.jpg"
+    assert plan2.scenes[2].image_path.name == "2_bedroom.jpg"
+    assert plan2.scenes[3].image_path.name == "2_bathroom.jpg"
+

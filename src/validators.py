@@ -16,7 +16,7 @@ from src.models import PropertyData
 REQUIRED_TEXT_FIELDS = ["name", "location", "property_type", "cta_text"]
 ALL_KNOWN_FIELDS = {
     "name", "location", "price", "property_type",
-    "features", "cta_text", "contact", "tagline",
+    "features", "cta_text", "contact", "tagline", "custom_script",
 }
 
 MAX_TEXT_LEN = 120    # chars; must fit on screen
@@ -255,6 +255,19 @@ def validate_property(
     else:
         validated["tagline"] = None
 
+    # ── Custom script (optional) ────────────────────────────────────────
+    raw_custom_script = data.get("custom_script")
+    if raw_custom_script is not None:
+        if isinstance(raw_custom_script, dict):
+            validated["custom_script"] = raw_custom_script
+        else:
+            warnings.append(
+                "Optional field 'custom_script' must be a JSON object; ignoring."
+            )
+            validated["custom_script"] = None
+    else:
+        validated["custom_script"] = None
+
     # ── Build result ────────────────────────────────────────────────────
     if errors:
         return None, warnings, errors
@@ -268,6 +281,7 @@ def validate_property(
         cta_text=validated["cta_text"],
         contact=validated.get("contact"),
         tagline=validated.get("tagline"),
+        custom_script=validated.get("custom_script"),
     )
     return prop, warnings, errors
 
