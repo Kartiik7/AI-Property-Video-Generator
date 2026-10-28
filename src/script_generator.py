@@ -15,6 +15,7 @@ Enforces:
   - Deterministic variant selection (same input -> same output)
 """
 
+import os
 import re
 import hashlib
 import textwrap
@@ -421,17 +422,20 @@ def _assign_scene_images(
 def build_scene_plan(
     prop: PropertyData,
     images: list[Path],
-    use_llm: bool = False,
+    use_llm: bool | None = None,
 ) -> ScenePlan:
     """Build a complete ScenePlan from validated PropertyData and image paths.
 
     If custom_script is present on PropertyData, each valid custom line replaces the
-    template text for that scene. If any custom line fails validation or fact-checking,
-    it falls back to the template text with a descriptive warning.
+    template text for that scene and takes priority.
 
-    If use_llm is True (and no custom_script used), attempts to enhance captions/voiceovers
-    via OpenAI-compatible endpoint.
+    If use_llm is True (or None with LLM_API_KEY set in .env), attempts to enhance
+    captions/voiceovers per-scene via OpenAI-compatible endpoint with per-scene fact checks
+    and targeted retry. Failing scenes fall back to deterministic template text.
     """
+    if use_llm is None:
+        use_llm = bool(os.getenv("LLM_API_KEY", "").strip())
+
     warnings: list[str] = []
 
     # ── 1. Create skeleton scenes ─────────────────────────────────────────
@@ -452,8 +456,10 @@ def build_scene_plan(
     scenes_data.append(_build_cta_scene(prop))
 
     allowed_facts = extract_allowed_facts(prop)
+    template_scenes = [dict(s) for s in scenes_data]
 
     # ── 2. Apply optional custom_script ───────────────────────────────────
+    custom_covered_indices: set[int] = set()
     custom_scenes_count = 0
     if prop.custom_script and isinstance(prop.custom_script, dict):
         cs = prop.custom_script
@@ -464,6 +470,7 @@ def build_scene_plan(
             if valid:
                 scenes_data[0]["caption"] = valid["caption"]
                 scenes_data[0]["voiceover"] = valid["voiceover"]
+                custom_covered_indices.add(0)
                 custom_scenes_count += 1
             else:
                 warnings.append(
@@ -481,6 +488,7 @@ def build_scene_plan(
                     if valid:
                         scenes_data[scene_idx]["caption"] = valid["caption"]
                         scenes_data[scene_idx]["voiceover"] = valid["voiceover"]
+                        custom_covered_indices.add(scene_idx)
                         custom_scenes_count += 1
                     else:
                         warnings.append(
@@ -496,6 +504,7 @@ def build_scene_plan(
             if valid:
                 scenes_data[pl_idx]["caption"] = valid["caption"]
                 scenes_data[pl_idx]["voiceover"] = valid["voiceover"]
+                custom_covered_indices.add(pl_idx)
                 custom_scenes_count += 1
             else:
                 warnings.append(
@@ -509,6 +518,7 @@ def build_scene_plan(
             if valid:
                 scenes_data[cta_idx]["caption"] = valid["caption"]
                 scenes_data[cta_idx]["voiceover"] = valid["voiceover"]
+                custom_covered_indices.add(cta_idx)
                 custom_scenes_count += 1
             else:
                 warnings.append(
@@ -518,16 +528,37 @@ def build_scene_plan(
     if custom_scenes_count > 0:
         warnings.append(f"Custom script used for {custom_scenes_count} scenes.")
 
-    source = "template"
-
-    # ── 3. Optional LLM mode (only if no custom script was used) ──────────
-    if use_llm and custom_scenes_count == 0:
+    # ── 3. Optional LLM mode ──────────────────────────────────────────────
+    llm_scenes_used = 0
+    if use_llm:
         from src.llm_client import generate_scene_copy
-        llm_scenes, llm_warnings = generate_scene_copy(prop, scenes_data)
+        scene_skeleton = []
+        for idx, s in enumerate(template_scenes):
+            sk = {"scene_index": idx + 1, "scene_type": s["scene_type"]}
+            if s["scene_type"] == "feature":
+                sk["feature"] = s["caption"]
+            scene_skeleton.append(sk)
+
+        llm_scenes, llm_warnings = generate_scene_copy(prop, scene_skeleton)
         warnings.extend(llm_warnings)
+
         if llm_scenes is not None:
-            scenes_data = llm_scenes
-            source = "llm"
+            for idx, s in enumerate(llm_scenes):
+                # custom_script in property.json still takes priority for the scenes it covers
+                if idx in custom_covered_indices:
+                    continue
+                if s is not None:
+                    scenes_data[idx]["caption"] = s["caption"]
+                    scenes_data[idx]["voiceover"] = s["voiceover"]
+                    llm_scenes_used += 1
+
+    total_scenes = len(scenes_data)
+    if llm_scenes_used == total_scenes:
+        source = "llm"
+    elif llm_scenes_used == 0:
+        source = "template"
+    else:
+        source = f"mixed ({llm_scenes_used} of {total_scenes} scenes from LLM)"
 
     # ── 4. Calculate durations ────────────────────────────────────────────
     durations = calculate_durations(scenes_data)

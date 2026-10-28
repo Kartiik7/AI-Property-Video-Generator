@@ -67,7 +67,7 @@ Point to a different images directory:
 python main.py --data input/property.json --images path/to/images
 ```
 
-### 3 — Optional LLM Mode
+### 3 — LLM Mode (Auto-Enabled when API Key is Present)
 
 Copy `.env.example` to `.env` and set your API key:
 
@@ -81,13 +81,18 @@ LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
 ```
 
-Run with `--use-llm`:
+- **Automatic LLM Mode**: If `LLM_API_KEY` is set in `.env`, LLM mode is used automatically.
+- **Force Template Mode**: Use `--no-llm` to force template generation even when an API key is configured.
+- **Explicit Flag**: `--use-llm` is supported as an explicit alias.
+- **Custom Script Priority**: Any `custom_script` provided in `property.json` always takes precedence for the scenes it covers.
 
 ```bash
-python main.py --data input/property.json --use-llm
-```
+# Automatic LLM mode (when LLM_API_KEY is in .env)
+python main.py --data input/property.json
 
-If the API key is missing or any response fails validation / fact checks, the system automatically falls back to deterministic template generation with clear warning messages.
+# Force template mode even if LLM_API_KEY is configured
+python main.py --data input/property.json --no-llm
+```
 
 ### 4 — Enter details interactively
 
@@ -114,6 +119,21 @@ The generator converts property facts and images into a structured **ScenePlan**
 2. **Feature Scenes**: Features are grouped into at most 4 scenes (merging extra features into the last feature scene). Each feature scene pairs with an image.
 3. **Price & Location Scene**: Displays formatted price (`₹45,00,000`) and location; spoken voiceover converts prices to natural Indian words (e.g. `"45 lakh rupees"`, `"1 crore 20 lakh rupees"`).
 4. **Call to Action (CTA) Scene**: Displays call to action text and contact info. Reuses the first image if images run out.
+
+### AI / LLM Script Generation
+
+When LLM mode is active (default when `LLM_API_KEY` is present):
+
+- **What the AI does**: The AI acts as a professional real estate copywriter, authoring natural, conversational spoken voiceovers and punchy on-screen captions tailored to each scene type. It uses a low temperature (0.3) for high consistency.
+- **What information it uses**: The prompt receives **strictly** the declared property facts (`name`, `location`, `price`, `property_type`, `features`, `cta_text`, optional `contact`, optional `tagline`) and the scene skeleton (`title`, `feature`, `price_location`, `cta`). The LLM is never given open-ended creative license to assume or extrapolate facts.
+- **How its output is checked**:
+  - **Per-Scene Constraints**: Each scene is vetted individually: captions must stay within 2 lines of max 38 characters each, voiceovers must not exceed 18 words, and the phone number is never spoken.
+  - **Fact Checking**: Every generated line is verified by `src/fact_checker.py`. No foreign numbers, unmentioned amenities (e.g. unlisted gym, swimming pool, clubhouse), or prohibited promotional claims (`luxury`, `premium`, `best in class`, `guaranteed`, `RERA approved`, `near metro`) are permitted.
+  - **Single Targeted Retry**: If any scenes fail validation or fact checks, the system issues **one** focused retry call providing the LLM with the exact error details (e.g., `"scene 3 contains the number 500 which is not in the input"`), requesting corrections for only the failing scenes.
+- **Fallback Behavior**:
+  - **Per-Scene Fallback**: Only scenes that still fail after retry are replaced with deterministic template text; all valid LLM scenes are preserved.
+  - **Graceful Network & Format Recovery**: If the API call times out (20s limit), encounters HTTP errors or rate limits (`429`), or returns malformed JSON, the generator logs a clear warning and seamlessly falls back to template generation without crashing. The API key is never printed or logged.
+  - **Transparent Source Tracking**: The plan records its exact origin — `"llm"` (all scenes from AI), `"template"` (deterministic fallback), or `"mixed (N of M scenes from LLM)"` — and saves this in `output/script.json`.
 
 ### Duration Budgeting
 - Per-scene duration estimated from voiceover length: $\max(3.5, \text{words} / 2.5 + 0.8)$ seconds (title/CTA minimum 4.0s).

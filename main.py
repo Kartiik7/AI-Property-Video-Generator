@@ -10,6 +10,7 @@ Exit codes:
   2 — bad CLI usage (handled automatically by argparse)
 """
 
+import os
 import sys
 import argparse
 from pathlib import Path
@@ -67,7 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--use-llm",
         action="store_true",
-        help="Enable optional LLM mode for generating captions and voiceover.",
+        help="Enable optional LLM mode for generating captions and voiceover (default if LLM_API_KEY is set).",
+    )
+    p.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Force template generation and disable LLM mode even if LLM_API_KEY is set.",
     )
     p.add_argument(
         "--script-out",
@@ -214,7 +220,15 @@ def main() -> int:
         return 1
 
     logger.info("Input validation passed — building scene plan.")
-    plan = build_scene_plan(result.property, result.images, use_llm=args.use_llm)
+    has_api_key = bool(os.getenv("LLM_API_KEY", "").strip())
+    if args.no_llm:
+        use_llm = False
+    elif args.use_llm:
+        use_llm = True
+    else:
+        use_llm = has_api_key
+
+    plan = build_scene_plan(result.property, result.images, use_llm=use_llm)
     print_scene_plan(plan)
 
     # Save script JSON
