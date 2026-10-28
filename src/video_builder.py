@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance, ImageOps
 from moviepy import VideoClip, CompositeVideoClip, vfx
 
 from src.models import PropertyData, ScenePlan, Scene
@@ -32,6 +32,15 @@ WINDOWS_FONTS = [
     Path("C:/Windows/Fonts/arialbd.ttf"),
     Path("C:/Windows/Fonts/segoeui.ttf"),
     Path("C:/Windows/Fonts/arial.ttf"),
+]
+
+INDIC_FONTS = [
+    Path("C:/Windows/Fonts/Nirmala.ttf"),
+    Path("C:/Windows/Fonts/NirmalaB.ttf"),
+    Path("C:/Windows/Fonts/mangal.ttf"),
+    Path("C:/Windows/Fonts/aparaj.ttf"),
+    Path("/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"),
 ]
 
 UNIX_FONTS = [
@@ -52,6 +61,70 @@ def font_has_glyph(font_path: Path, glyph: str = "₹") -> bool:
         return m.size[0] > 0 and m.size[1] > 0
     except Exception:
         return False
+
+
+def font_can_render_text(font_path: Path, text: str) -> bool:
+    """Check if font has glyphs for all non-ASCII characters in text."""
+    try:
+        f = ImageFont.truetype(str(font_path), 24)
+        for ch in text:
+            if ord(ch) < 128 or ch == "₹":
+                continue
+            m = f.getmask(ch)
+            if m.size[0] == 0 or m.size[1] == 0:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def resolve_font_for_text(
+    preferred_font: Path | None,
+    lines: list[str],
+    warnings: list[str] | None = None,
+) -> tuple[Path | None, list[str]]:
+    """Ensure font can render characters in lines; switch to Indic font or safely filter unrenderable characters."""
+    combined = "\n".join(lines)
+    non_ascii = [ch for ch in combined if ord(ch) >= 128 and ch != "₹"]
+    if not non_ascii:
+        return preferred_font, lines
+
+    if preferred_font and preferred_font.exists() and font_can_render_text(preferred_font, combined):
+        return preferred_font, lines
+
+    # Search for an Indic or Unicode font
+    for p in INDIC_FONTS + WINDOWS_FONTS + UNIX_FONTS:
+        if p.exists() and p.is_file() and font_can_render_text(p, combined):
+            msg = f"Switched to font '{p.name}' for non-Latin characters in caption."
+            if warnings is not None and msg not in warnings:
+                warnings.append(msg)
+            return p, lines
+
+    # Fallback: filter unrenderable characters safely
+    msg = "Some non-Latin characters cannot be rendered with available fonts and were skipped on screen."
+    if warnings is not None and msg not in warnings:
+        warnings.append(msg)
+
+    cleaned_lines = []
+    for line in lines:
+        safe_chars = []
+        if preferred_font and preferred_font.exists():
+            try:
+                f = ImageFont.truetype(str(preferred_font), 24)
+                for ch in line:
+                    if ord(ch) < 128 or ch == "₹":
+                        safe_chars.append(ch)
+                    else:
+                        m = f.getmask(ch)
+                        if m.size[0] > 0 and m.size[1] > 0:
+                            safe_chars.append(ch)
+            except Exception:
+                safe_chars = [ch for ch in line if ord(ch) < 128 or ch == "₹"]
+        else:
+            safe_chars = [ch for ch in line if ord(ch) < 128 or ch == "₹"]
+        cleaned_lines.append("".join(safe_chars).strip() or line)
+
+    return preferred_font, cleaned_lines
 
 
 def get_best_font_path(warnings: list[str] | None = None) -> tuple[Path | None, bool]:
@@ -157,7 +230,30 @@ def create_base_composed_frame(
             raise FileNotFoundError(f"File not found: {image_path}")
         with Image.open(image_path) as src:
             src.load()
-            img = src.convert("RGB")
+            # 1. Apply EXIF orientation (rotated phone photos)
+            transposed = ImageOps.exif_transpose(src)
+            src = transposed if transposed is not None else src
+
+            # 2. Safe color-space conversion (RGBA, CMYK, Palette, Grayscale)
+            if src.mode in ("RGBA", "LA") or (src.mode == "P" and "transparency" in src.info):
+                alpha_src = src.convert("RGBA")
+                bg = Image.new("RGBA", alpha_src.size, (20, 28, 45, 255))
+                img = Image.alpha_composite(bg, alpha_src).convert("RGB")
+            elif src.mode == "CMYK":
+                img = src.convert("RGB")
+            elif src.mode != "RGB":
+                img = src.convert("RGB")
+            else:
+                img = src.copy()
+
+            # 3. Downscale huge images (e.g. 6000x4000) for speed and memory efficiency
+            MAX_DIM = 2560
+            if max(img.width, img.height) > MAX_DIM:
+                scale = MAX_DIM / max(img.width, img.height)
+                new_w = max(1, int(round(img.width * scale)))
+                new_h = max(1, int(round(img.height * scale)))
+                img = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
+
     except Exception as exc:
         msg = f"Could not load image '{image_path}': {exc}. Using placeholder background."
         logger.warning(msg)
@@ -166,14 +262,18 @@ def create_base_composed_frame(
         # Solid dark brand-colored placeholder
         return Image.new("RGB", (W, H), (20, 28, 45))
 
+    # Guard against zero or tiny dimensions
+    img_w = max(1, img.width)
+    img_h = max(1, img.height)
+
     # 1. Background: cover-crop + blur + darken
-    scale_bg = max(W / img.width, H / img.height)
-    bg_w = max(1, int(round(img.width * scale_bg)))
-    bg_h = max(1, int(round(img.height * scale_bg)))
+    scale_bg = max(W / img_w, H / img_h)
+    bg_w = max(1, int(round(img_w * scale_bg)))
+    bg_h = max(1, int(round(img_h * scale_bg)))
 
     bg_resized = img.resize((bg_w, bg_h), Image.Resampling.LANCZOS)
-    left = (bg_w - W) // 2
-    top = (bg_h - H) // 2
+    left = max(0, (bg_w - W) // 2)
+    top = max(0, (bg_h - H) // 2)
     bg_cropped = bg_resized.crop((left, top, left + W, top + H))
 
     # Gaussian blur & darken
@@ -181,9 +281,9 @@ def create_base_composed_frame(
     bg_dark = ImageEnhance.Brightness(bg_blurred).enhance(0.40)
 
     # 2. Foreground: contain-fit without distortion
-    scale_fg = min(W / img.width, H / img.height)
-    fg_w = max(1, int(round(img.width * scale_fg)))
-    fg_h = max(1, int(round(img.height * scale_fg)))
+    scale_fg = min(W / img_w, H / img_h)
+    fg_w = max(1, int(round(img_w * scale_fg)))
+    fg_h = max(1, int(round(img_h * scale_fg)))
 
     fg_resized = img.resize((fg_w, fg_h), Image.Resampling.LANCZOS)
     paste_x = (W - fg_w) // 2
@@ -417,7 +517,8 @@ def make_scene_clip(
 
     # Render static overlay and pre-extract alpha crop
     caption_lines = prepare_caption_text(scene.caption, supports_rupee)
-    overlay_img, bbox = render_text_overlay(scene.scene_type, caption_lines, size, font_path)
+    scene_font, safe_lines = resolve_font_for_text(font_path, caption_lines, warnings)
+    overlay_img, bbox = render_text_overlay(scene.scene_type, safe_lines, size, scene_font)
 
     has_overlay = bbox is not None
     if has_overlay:
@@ -567,18 +668,33 @@ def build_video(
                 logger=None,
             )
 
-            # Atomically replace destination
-            if out_path.exists():
-                out_path.unlink()
-            temp_out.replace(out_path)
+            # Atomically replace destination (handling locked or in-use files)
+            try:
+                if out_path.exists():
+                    out_path.unlink()
+                temp_out.replace(out_path)
+            except (PermissionError, OSError) as lock_exc:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                alt_out = out_dir / f"{out_path.stem}_{timestamp}{out_path.suffix}"
+                warn_msg = (
+                    f"Destination file '{out_path.name}' is locked or in use. "
+                    f"Writing to alternate filename: '{alt_out.name}'"
+                )
+                logger.warning(warn_msg)
+                if plan.warnings is not None and warn_msg not in plan.warnings:
+                    plan.warnings.append(warn_msg)
+                temp_out.replace(alt_out)
+                out_path = alt_out
 
-        except (PermissionError, OSError) as exc:
-            msg = (
-                f"Cannot write video to '{out_path}'. "
-                f"The file may be open in a media player or locked: {exc}"
-            )
-            logger.error(msg)
-            raise OSError(msg) from exc
+        except Exception as exc:
+            # Clean up destination if partial/empty
+            if out_path.exists() and out_path.stat().st_size == 0:
+                try:
+                    out_path.unlink()
+                except Exception:
+                    pass
+            logger.error("Video rendering or export failed: %s", exc)
+            raise
         finally:
             if temp_out.exists():
                 try:

@@ -398,27 +398,12 @@ def build_audio_tracks(
     if not no_music:
         resolved_music = _resolve_music_file(music_path, warnings)
         if resolved_music:
-            try:
-                raw_music = AudioFileClip(str(resolved_music))
-                video_total = plan.total_duration
-
-                # Volume level: 0.10 when narration exists, 0.18 when no narration
-                vol_factor = 0.10 if has_narration else 0.18
-
-                # Loop or trim to match total video duration
-                if raw_music.duration < video_total:
-                    looped = raw_music.with_effects([afx.AudioLoop(duration=video_total)])
-                else:
-                    looped = raw_music.subclipped(0, video_total)
-
-                music_track = looped.with_effects([
-                    afx.AudioFadeIn(1.0),
-                    afx.AudioFadeOut(1.5),
-                    afx.MultiplyVolume(vol_factor),
-                ])
-            except Exception as exc:
-                logger.warning("Could not process background music file: %s", exc)
-                warnings.append(f"Could not load background music ({exc}); continuing without music.")
+            music_track = load_background_music(
+                music_file=resolved_music,
+                target_duration=plan.total_duration,
+                has_narration=has_narration,
+                warnings=warnings,
+            )
 
     # ── 6. Combine Narration + Music ────────────────────────────────────────
     final_audio: AudioClip | None = None
@@ -430,6 +415,40 @@ def build_audio_tracks(
         final_audio = music_track
 
     return final_audio, scene_durations
+
+
+def load_background_music(
+    music_file: Path | str,
+    target_duration: float,
+    has_narration: bool = False,
+    warnings: list[str] | None = None,
+) -> AudioClip | None:
+    """Load, loop or trim, duck, and fade background music safely.
+
+    Returns AudioClip or None on failure, appending a clean warning.
+    """
+    if warnings is None:
+        warnings = []
+    try:
+        raw_music = AudioFileClip(str(music_file))
+        vol_factor = 0.10 if has_narration else 0.18
+
+        if raw_music.duration < target_duration:
+            looped = raw_music.with_effects([afx.AudioLoop(duration=target_duration)])
+        else:
+            looped = raw_music.subclipped(0, target_duration)
+
+        return looped.with_effects([
+            afx.AudioFadeIn(1.0),
+            afx.AudioFadeOut(1.5),
+            afx.MultiplyVolume(vol_factor),
+        ])
+    except Exception as exc:
+        logger.warning("Could not process background music file '%s': %s", music_file, exc)
+        warn_msg = f"Could not load background music ({exc}); continuing without music."
+        if warn_msg not in warnings:
+            warnings.append(warn_msg)
+        return None
 
 
 # ── Music File Resolver ────────────────────────────────────────────────────

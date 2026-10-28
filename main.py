@@ -58,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enter property details interactively via prompts.",
     )
+    source.add_argument(
+        "--check",
+        action="store_true",
+        help="Check environment and optional capabilities, then exit.",
+    )
 
     p.add_argument(
         "--images",
@@ -243,6 +248,11 @@ def open_video_in_player(path: Path) -> None:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.check:
+        from src.setup_checker import print_capabilities_report
+        print_capabilities_report()
+        return 0
 
     images_dir = Path(args.images)
 

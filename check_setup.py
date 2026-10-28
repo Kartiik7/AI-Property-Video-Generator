@@ -169,11 +169,16 @@ except ImportError as exc:
 except Exception as exc:
     fail(f"Test video creation failed: {exc}")
 
-# ── 5. Final report ──────────────────────────────────────────────────────────
+# ── 5. Optional Capabilities ──────────────────────────────────────────────────
+
+from src.setup_checker import print_capabilities_report
+print_capabilities_report()
+
+# ── 6. Final report ──────────────────────────────────────────────────────────
 
 print(SEP)
 if not failures:
-    print("ALL CHECKS PASSED \u2713")
+    print("ALL CORE CHECKS PASSED \u2713")
 else:
     print(f"CHECKS FAILED ({len(failures)} issue(s)):")
     for i, f_msg in enumerate(failures, 1):
