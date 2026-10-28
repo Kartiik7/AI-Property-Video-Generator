@@ -3,6 +3,7 @@ models.py — Core data structures for the AI Property Video Generator.
 """
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 
@@ -59,6 +60,12 @@ class ScenePlan:
 
     def to_dict(self) -> dict:
         """Convert to a JSON-serializable dictionary."""
+        def display_path(path: Path) -> str:
+            try:
+                return os.path.relpath(path, Path.cwd())
+            except ValueError:
+                return path.name
+
         d = {
             "source": self.source,
             "total_duration": self.total_duration,
@@ -66,7 +73,7 @@ class ScenePlan:
             "scenes": [
                 {
                     "scene_type": s.scene_type,
-                    "image_path": str(s.image_path),
+                    "image_path": display_path(s.image_path),
                     "caption": s.caption,
                     "voiceover": s.voiceover,
                     "duration": round(s.duration, 2),

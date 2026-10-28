@@ -9,42 +9,42 @@
   "scenes": [
     {
       "scene_type": "title",
-      "image_path": "D:\\Projects 2026\\AIPropertyVideoGenerator-realtyAssistant\\property-video-generator\\input\\samples\\house_2\\images\\2_frontal.jpg",
+      "image_path": "input\\samples\\house_2\\images\\2_frontal.jpg",
       "caption": "Cedar Park Villa\nLive well, every single day",
       "voiceover": "Welcome to Cedar Park Villa, a villa. Live well, every single day.",
       "duration": 5.6
     },
     {
       "scene_type": "feature",
-      "image_path": "D:\\Projects 2026\\AIPropertyVideoGenerator-realtyAssistant\\property-video-generator\\input\\samples\\house_2\\images\\2_kitchen.jpg",
+      "image_path": "input\\samples\\house_2\\images\\2_kitchen.jpg",
       "caption": "Modern kitchen",
       "voiceover": "Also featured: modern kitchen.",
       "duration": 3.5
     },
     {
       "scene_type": "feature",
-      "image_path": "D:\\Projects 2026\\AIPropertyVideoGenerator-realtyAssistant\\property-video-generator\\input\\samples\\house_2\\images\\2_bedroom.jpg",
+      "image_path": "input\\samples\\house_2\\images\\2_bedroom.jpg",
       "caption": "Airy bedroom",
       "voiceover": "Highlights include airy bedroom.",
       "duration": 3.5
     },
     {
       "scene_type": "feature",
-      "image_path": "D:\\Projects 2026\\AIPropertyVideoGenerator-realtyAssistant\\property-video-generator\\input\\samples\\house_2\\images\\2_bathroom.jpg",
+      "image_path": "input\\samples\\house_2\\images\\2_bathroom.jpg",
       "caption": "Well-kept bathroom",
       "voiceover": "Also featured: well-kept bathroom.",
       "duration": 3.5
     },
     {
       "scene_type": "price_location",
-      "image_path": "D:\\Projects 2026\\AIPropertyVideoGenerator-realtyAssistant\\property-video-generator\\input\\samples\\house_2\\images\\2_frontal.jpg",
+      "image_path": "input\\samples\\house_2\\images\\2_frontal.jpg",
       "caption": "₹1,25,00,000\nSector 62, Noida",
       "voiceover": "Available at 1 crore 25 lakh rupees in Sector 62, Noida.",
       "duration": 5.2
     },
     {
       "scene_type": "cta",
-      "image_path": "D:\\Projects 2026\\AIPropertyVideoGenerator-realtyAssistant\\property-video-generator\\input\\samples\\house_2\\images\\2_frontal.jpg",
+      "image_path": "input\\samples\\house_2\\images\\2_frontal.jpg",
       "caption": "Call now to schedule a visit\n+91-00000-11111",
       "voiceover": "Call now to schedule a visit. Contact details are on screen.",
       "duration": 5.2

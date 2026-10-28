@@ -27,29 +27,35 @@ logger = logging.getLogger("property_video")
 
 # ── Font resolution & glyph checks ──────────────────────────────────────────
 
+_windows_font_dir = Path(os.environ.get("WINDIR", "")) / "Fonts"
 WINDOWS_FONTS = [
-    Path("C:/Windows/Fonts/segoeuib.ttf"),
-    Path("C:/Windows/Fonts/arialbd.ttf"),
-    Path("C:/Windows/Fonts/segoeui.ttf"),
-    Path("C:/Windows/Fonts/arial.ttf"),
+    _windows_font_dir / "segoeuib.ttf",
+    _windows_font_dir / "arialbd.ttf",
+    _windows_font_dir / "segoeui.ttf",
+    _windows_font_dir / "arial.ttf",
 ]
 
+_unix_font_dirs = [
+    Path(os.sep) / "usr" / "share" / "fonts",
+    Path(os.sep) / "System" / "Library" / "Fonts",
+    Path(os.sep) / "Library" / "Fonts",
+]
 INDIC_FONTS = [
-    Path("C:/Windows/Fonts/Nirmala.ttf"),
-    Path("C:/Windows/Fonts/NirmalaB.ttf"),
-    Path("C:/Windows/Fonts/mangal.ttf"),
-    Path("C:/Windows/Fonts/aparaj.ttf"),
-    Path("/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf"),
-    Path("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"),
+    _windows_font_dir / "Nirmala.ttf",
+    _windows_font_dir / "NirmalaB.ttf",
+    _windows_font_dir / "mangal.ttf",
+    _windows_font_dir / "aparaj.ttf",
+    _unix_font_dirs[0] / "truetype" / "lohit-devanagari" / "Lohit-Devanagari.ttf",
+    _unix_font_dirs[0] / "truetype" / "noto" / "NotoSansDevanagari-Regular.ttf",
 ]
 
 UNIX_FONTS = [
-    Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
-    Path("/System/Library/Fonts/Helvetica.ttc"),
-    Path("/Library/Fonts/Arial Bold.ttf"),
-    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-    Path("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"),
+    _unix_font_dirs[1] / "Supplemental" / "Arial Bold.ttf",
+    _unix_font_dirs[1] / "Helvetica.ttc",
+    _unix_font_dirs[2] / "Arial Bold.ttf",
+    _unix_font_dirs[0] / "truetype" / "dejavu" / "DejaVuSans-Bold.ttf",
+    _unix_font_dirs[0] / "truetype" / "dejavu" / "DejaVuSans.ttf",
+    _unix_font_dirs[0] / "TTF" / "DejaVuSans-Bold.ttf",
 ]
 
 

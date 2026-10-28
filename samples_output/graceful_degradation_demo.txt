@@ -47,7 +47,7 @@ Images (3 accepted):
   - valid_2.jpg
 
 WARNINGS (6):
-  âš   'corrupt_photo.jpg' could not be read (possibly corrupt): cannot identify image file 'C:\\Users\\KARTIK~1\\AppData\\Local\\Temp\\tmp34jbe9f5\\corrupt_photo.jpg'. Skipping this file.
+  âš   'corrupt_photo.jpg' could not be read (possibly corrupt): cannot identify image file '<path>rs\\KARTIK~1\\AppData\\Local\\Temp\\tmpwtifmnys\\corrupt_photo.jpg'. Skipping this file.
   âš   Only 3 image(s) found. Recommended: 4â€“8 images. The video will be shorter.
   âš   Custom script used for 6 scenes.
   âš   LLM API primary failed after retry (rate limit reached (HTTP 429)).
@@ -87,12 +87,12 @@ PLAN WARNINGS (4):
   âš   Only 3 image(s) available for 6 scenes; images were reused.
 ======================================================================
 
-âœ“ Scene plan saved to: D:\Projects 2026\AIPropertyVideoGenerator-realtyAssistant\property-video-generator\output\script.json
+âœ“ Scene plan saved to: <project>\output\script.json
 
 âœ“ Skipping video rendering (--no-video flag set).
 
 [WARNING] LLM API rate limit exceeded (HTTP 429)
-[WARNING] LLM API primary returned rate limit reached (HTTP 429). Retrying once after 2.32s...
+[WARNING] LLM API primary returned rate limit reached (HTTP 429). Retrying once after 2.13s...
 [WARNING] LLM API rate limit exceeded (HTTP 429)
 [WARNING] LLM API primary failed after retry (rate limit reached (HTTP 429)).
 
@@ -189,12 +189,12 @@ PLAN WARNINGS (4):
   âš   Only 4 image(s) available for 6 scenes; images were reused.
 ======================================================================
 
-âœ“ Scene plan saved to: D:\Projects 2026\AIPropertyVideoGenerator-realtyAssistant\property-video-generator\output\script.json
+âœ“ Scene plan saved to: <project>\output\script.json
 
 âœ“ Skipping video rendering (--no-video flag set).
 
 [WARNING] LLM API rate limit exceeded (HTTP 429)
-[WARNING] LLM API primary returned rate limit reached (HTTP 429). Retrying once after 2.24s...
+[WARNING] LLM API primary returned rate limit reached (HTTP 429). Retrying once after 2.12s...
 [WARNING] LLM API rate limit exceeded (HTTP 429)
 [WARNING] LLM API primary failed after retry (rate limit reached (HTTP 429)).
 

@@ -12,6 +12,7 @@ Verifies each MP4 via tools/verify_video.py.
 """
 
 import os
+import re
 import sys
 import json
 import shutil
@@ -33,6 +34,12 @@ BASE_DIR = Path(__file__).parent.resolve()
 OUTPUT_DIR = BASE_DIR / "samples_output"
 HOUSE_1_DIR = BASE_DIR / "input" / "samples" / "house_1"
 HOUSE_2_DIR = BASE_DIR / "input" / "samples" / "house_2"
+
+
+def sanitize_console_output(text: str) -> str:
+    """Keep generated demo logs portable and free of machine-specific paths."""
+    text = text.replace(str(BASE_DIR), "<project>")
+    return re.sub(r"[A-Za-z]:\\\\[^\\r\\n]+", "<path>", text)
 
 
 def generate_maple_residency_custom() -> dict:
@@ -65,10 +72,11 @@ def generate_maple_residency_custom() -> dict:
         "file": out_mp4.name,
         "script_file": out_script.name,
         "command": "python main.py --data input/samples/house_1/property.json --images input/samples/house_1/images --out samples_output/maple_residency_custom_script.mp4",
-        "source": result.plan.source if result.plan else "custom_script",
+        "source": "custom",
         "duration": f"{info['duration']}s",
         "size": f"{info['file_size_mb']} MB",
-        "audio": "Narration (edge-tts) + Background Music",
+        "audio": "Narration + Background Music",
+        "voice_provider": "edge-tts fallback; en-IN-NeerjaNeural",
     }
 
 
@@ -105,7 +113,8 @@ def generate_cedar_park_template() -> dict:
         "source": "template",
         "duration": f"{info['duration']}s",
         "size": f"{info['file_size_mb']} MB",
-        "audio": "Narration (edge-tts) + Background Music",
+        "audio": "Narration + Background Music",
+        "voice_provider": "edge-tts fallback; en-IN-NeerjaNeural",
     }
 
 
@@ -146,10 +155,15 @@ def generate_cedar_park_llm() -> dict | None:
         "file": out_mp4.name,
         "script_file": out_script.name,
         "command": "python main.py --data input/samples/house_2/property_template.json --images input/samples/house_2/images --use-llm --out samples_output/cedar_park_villa_llm.mp4 --script-out samples_output/script_llm.json",
-        "source": result.plan.source if result.plan else "llm",
+        "source": (
+            result.plan.source
+            if result.plan and result.plan.source != "template"
+            else "template (LLM fallback; rate limit or unavailable provider)"
+        ),
         "duration": f"{info['duration']}s",
         "size": f"{info['file_size_mb']} MB",
-        "audio": "Narration (edge-tts) + Background Music",
+        "audio": "Narration + Background Music",
+        "voice_provider": "edge-tts fallback; en-IN-NeerjaNeural",
     }
 
 
@@ -170,7 +184,7 @@ def generate_graceful_degradation_demo() -> Path:
         capture_output=True, text=True, errors="replace"
     )
     chunks.append(
-        f"{SEP}\nSCENARIO 1: MISSING IMAGE FOLDER\nCommand: python main.py --data input/samples/house_1/property.json --images non_existent_folder_xyz --no-video\nExit code: {res1.returncode}\n{SEP}\n{res1.stdout}\n{res1.stderr}\n"
+        f"{SEP}\nSCENARIO 1: MISSING IMAGE FOLDER\nCommand: python main.py --data input/samples/house_1/property.json --images non_existent_folder_xyz --no-video\nExit code: {res1.returncode}\n{SEP}\n{sanitize_console_output(res1.stdout)}\n{sanitize_console_output(res1.stderr)}\n"
     )
 
     # 2. Corrupt image in folder
@@ -188,7 +202,7 @@ def generate_graceful_degradation_demo() -> Path:
             capture_output=True, text=True, errors="replace"
         )
         chunks.append(
-            f"{SEP}\nSCENARIO 2: CORRUPT IMAGE IN IMAGES DIRECTORY\nCommand: python main.py --data input/samples/house_1/property.json --images <dir_with_corrupt_photo> --no-video\nExit code: {res2.returncode}\n{SEP}\n{res2.stdout}\n{res2.stderr}\n"
+            f"{SEP}\nSCENARIO 2: CORRUPT IMAGE IN IMAGES DIRECTORY\nCommand: python main.py --data input/samples/house_1/property.json --images <dir_with_corrupt_photo> --no-video\nExit code: {res2.returncode}\n{SEP}\n{sanitize_console_output(res2.stdout)}\n{sanitize_console_output(res2.stderr)}\n"
         )
 
     # 3. Missing required field
@@ -211,7 +225,7 @@ def generate_graceful_degradation_demo() -> Path:
             capture_output=True, text=True, errors="replace"
         )
         chunks.append(
-            f"{SEP}\nSCENARIO 3: MISSING REQUIRED PROPERTY FIELD ('price')\nCommand: python main.py --data <missing_price.json> --images input/samples/house_1/images --no-video\nExit code: {res3.returncode}\n{SEP}\n{res3.stdout}\n{res3.stderr}\n"
+            f"{SEP}\nSCENARIO 3: MISSING REQUIRED PROPERTY FIELD ('price')\nCommand: python main.py --data <missing_price.json> --images input/samples/house_1/images --no-video\nExit code: {res3.returncode}\n{SEP}\n{sanitize_console_output(res3.stdout)}\n{sanitize_console_output(res3.stderr)}\n"
         )
 
     # 4. No narration / music available
@@ -221,7 +235,7 @@ def generate_graceful_degradation_demo() -> Path:
         capture_output=True, text=True, errors="replace"
     )
     chunks.append(
-        f"{SEP}\nSCENARIO 4: NO NARRATION / MUSIC (--no-audio)\nCommand: python main.py --data input/samples/house_1/property.json --images input/samples/house_1/images --no-audio --no-video\nExit code: {res4.returncode}\n{SEP}\n{res4.stdout}\n{res4.stderr}\n"
+        f"{SEP}\nSCENARIO 4: NO NARRATION / MUSIC (--no-audio)\nCommand: python main.py --data input/samples/house_1/property.json --images input/samples/house_1/images --no-audio --no-video\nExit code: {res4.returncode}\n{SEP}\n{sanitize_console_output(res4.stdout)}\n{sanitize_console_output(res4.stderr)}\n"
     )
 
     demo_file.write_text("\n".join(chunks), encoding="utf-8")
@@ -240,13 +254,13 @@ def generate_readme(deliverables: list[dict]):
         "",
         "## Deliverables Overview",
         "",
-        "| Video File | Script Source | Duration | File Size | Audio Setup | Exact Generation Command |",
-        "| :--- | :--- | :--- | :--- | :--- | :--- |",
+        "| Video File | Script Source | Duration | File Size | Audio Setup | Voice/provider | Exact Generation Command |",
+        "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
     ]
 
     for d in deliverables:
         lines.append(
-            f"| **`{d['file']}`** | `{d['source']}` | {d['duration']} | {d['size']} | {d['audio']} | `{d['command']}` |"
+            f"| **`{d['file']}`** | `{d['source']}` | {d['duration']} | {d['size']} | {d['audio']} | {d['voice_provider']} | `{d['command']}` |"
         )
 
     lines.extend([
@@ -267,7 +281,7 @@ def generate_readme(deliverables: list[dict]):
         "- Duration strictly between **20 and 40 seconds**",
         "- High-definition resolution (1280×720 @ 24 fps)",
         "- Video Codec: **H.264** with **YUV420p** pixel format for universal player compatibility",
-        "- Audio: AAC stereo stream with synced voiceover and ducked background music",
+        "- Audio: MP3 stereo stream with synced voiceover and ducked background music",
         "- File size well under the 15 MB limit",
     ])
 
