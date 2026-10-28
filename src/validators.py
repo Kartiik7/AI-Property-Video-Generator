@@ -57,6 +57,30 @@ def _natural_key(path: Path) -> list:
     return [int(p) if p.isdigit() else p.lower() for p in parts]
 
 
+# Matches a price string that is purely numeric after stripping a leading
+# rupee symbol or 'Rs' prefix plus commas/spaces — e.g. "2000000",
+# "₹20,00,000", "Rs 45,00,000". Strings like "45 Lakhs" or "On request"
+# do NOT match and are kept exactly as entered.
+_NUMERIC_STR_RE = re.compile(
+    r'^(?:₹|[Rr][Ss]\.?\s*)?[\d,\s]+$'
+)
+
+
+def _parse_price_string(s: str) -> int | None:
+    """Return the integer value of a numeric price string, or None.
+
+    Strips a leading ₹/Rs prefix and commas/spaces, then checks whether
+    what remains is a plain integer.  Returns None for textual prices.
+    """
+    if not _NUMERIC_STR_RE.match(s):
+        return None
+    # Remove prefix (₹ or Rs/rs with optional dot and spaces)
+    cleaned = re.sub(r'^(?:₹|[Rr][Ss]\.?\s*)', '', s)
+    # Remove formatting characters
+    cleaned = cleaned.replace(',', '').replace(' ', '')
+    return int(cleaned) if cleaned.isdigit() and cleaned else None
+
+
 # ── Property validator ─────────────────────────────────────────────────────
 
 def validate_property(
@@ -118,7 +142,20 @@ def validate_property(
                 f"Maximum is {MAX_TEXT_LEN} characters."
             )
         else:
-            validated["price"] = price_str          # keep string as-is
+            # If the string is purely numeric (with optional ₹/Rs prefix and
+            # commas), treat it like a JSON number and apply Indian formatting.
+            # Genuinely textual prices ("₹45 Lakhs", "On request") are kept.
+            parsed = _parse_price_string(price_str)
+            if parsed is not None:
+                if parsed <= 0:
+                    errors.append(
+                        f"Field 'price' must be a positive number, got '{price_str}'. "
+                        "Please provide a value greater than zero."
+                    )
+                else:
+                    validated["price"] = _format_indian_price(parsed)
+            else:
+                validated["price"] = price_str      # keep textual price as-is
     elif isinstance(raw_price, (int, float)):
         num = round(raw_price)                       # int-ify floats
         if num <= 0:
@@ -269,6 +306,9 @@ def validate_images(
 
     for f in all_files:
         if not f.is_file():
+            continue
+        # Skip hidden files (e.g. .gitkeep, .DS_Store) silently — no warning.
+        if f.name.startswith('.'):
             continue
         ext = f.suffix.lower()
         if ext not in ACCEPTED_EXTENSIONS:

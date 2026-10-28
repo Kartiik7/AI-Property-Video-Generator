@@ -207,6 +207,41 @@ def test_string_price_kept_as_is():
     assert prop.price == "Call for price"
 
 
+def test_numeric_string_price_2000000_formatted():
+    data = {**VALID, "price": "2000000"}
+    prop, _, errors = validate_property(data)
+    assert errors == []
+    assert prop.price == "₹20,00,000"
+
+
+def test_numeric_string_price_formatted_with_rupee_symbol():
+    data = {**VALID, "price": "₹20,00,000"}
+    prop, _, errors = validate_property(data)
+    assert errors == []
+    assert prop.price == "₹20,00,000"
+
+
+def test_textual_price_45_lakhs_kept_as_is():
+    data = {**VALID, "price": "45 Lakhs"}
+    prop, _, errors = validate_property(data)
+    assert errors == []
+    assert prop.price == "45 Lakhs"
+
+
+def test_textual_price_rupee_45_lakhs_kept_as_is():
+    data = {**VALID, "price": "₹45 Lakhs"}
+    prop, _, errors = validate_property(data)
+    assert errors == []
+    assert prop.price == "₹45 Lakhs"
+
+
+def test_textual_price_on_request_kept_as_is():
+    data = {**VALID, "price": "On request"}
+    prop, _, errors = validate_property(data)
+    assert errors == []
+    assert prop.price == "On request"
+
+
 # ── Optional / extra field handling ───────────────────────────────────────
 
 def test_missing_contact_gives_warning_not_error():
@@ -306,6 +341,18 @@ def test_txt_file_ignored_with_warning(tmp_path):
     assert errors == []
     assert len(paths) == 1
     assert any("notes.txt" in w for w in warnings)
+
+
+def test_hidden_file_silently_ignored(tmp_path):
+    for i in range(4):
+        _img(tmp_path / f"img{i + 1}.jpg")
+    (tmp_path / ".gitkeep").write_text("")
+    (tmp_path / ".DS_Store").write_bytes(b"\x00\x00")
+    paths, warnings, errors = validate_images(tmp_path)
+    assert errors == []
+    assert len(paths) == 4
+    assert not any(".gitkeep" in w for w in warnings)
+    assert not any(".DS_Store" in w for w in warnings)
 
 
 def test_png_accepted(tmp_path):
