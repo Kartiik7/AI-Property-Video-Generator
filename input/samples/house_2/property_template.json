@@ -1,0 +1,14 @@
+{
+  "name": "Cedar Park Villa",
+  "location": "Sector 62, Noida",
+  "price": 12500000,
+  "property_type": "Villa",
+  "features": [
+    "Modern kitchen",
+    "Airy bedroom",
+    "Well-kept bathroom"
+  ],
+  "cta_text": "Call now to schedule a visit",
+  "contact": "+91-00000-11111",
+  "tagline": "Live well, every single day"
+}

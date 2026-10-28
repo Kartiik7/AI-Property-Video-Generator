@@ -1,0 +1,190 @@
+======================================================================
+SCENARIO 1: MISSING IMAGE FOLDER
+Command: python main.py --data input/samples/house_1/property.json --images non_existent_folder_xyz --no-video
+Exit code: 1
+======================================================================
+
+============================================================
+  PROPERTY VIDEO GENERATOR â€” INPUT SUMMARY
+============================================================
+
+Property Details: [could not be loaded â€” see ERRORS below]
+
+Images (0 accepted):
+  [none]
+
+ERRORS (1):
+  âœ—  Images folder not found: 'non_existent_folder_xyz'. Create the directory and add property images.
+============================================================
+
+[WARNING] Pipeline validation failed with 1 error(s).
+[WARNING] Pipeline execution failed with 1 error(s).
+
+
+======================================================================
+SCENARIO 2: CORRUPT IMAGE IN IMAGES DIRECTORY
+Command: python main.py --data input/samples/house_1/property.json --images <dir_with_corrupt_photo> --no-video
+Exit code: 0
+======================================================================
+
+============================================================
+  PROPERTY VIDEO GENERATOR â€” INPUT SUMMARY
+============================================================
+
+Property Details:
+  Name          : Maple Residency
+  Location      : Sector 150, Noida
+  Price         : â‚¹85,00,000
+  Type          : Independent House
+  Features      : Spacious kitchen, Comfortable bedroom, Clean bathroom
+  CTA           : Book a site visit today
+  Contact       : +91-00000-00000
+  Tagline       : Where every room feels like home
+
+Images (3 accepted):
+  - valid_0.jpg
+  - valid_1.jpg
+  - valid_2.jpg
+
+WARNINGS (5):
+  âš   'corrupt_photo.jpg' could not be read (possibly corrupt): cannot identify image file 'C:\\Users\\KARTIK~1\\AppData\\Local\\Temp\\tmpknas4c_8\\corrupt_photo.jpg'. Skipping this file.
+  âš   Only 3 image(s) found. Recommended: 4â€“8 images. The video will be shorter.
+  âš   Custom script used for 6 scenes.
+  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   Only 3 image(s) available for 6 scenes; images were reused.
+
+======================================================================
+  SCENE PLAN (Source: template | Total duration: 25.0s)
+======================================================================
+#   Type             Image              Duration   Caption / Voiceover
+----------------------------------------------------------------------
+1   title            valid_0.jpg        5.2s       Caption: Maple Residency
+                                                           Independent House
+                                                  VO     : "Welcome to Maple Residency, an independent house in Sector 150, Noida."
+
+2   feature          valid_1.jpg        3.6s       Caption: Spacious kitchen
+                                                  VO     : "Start your day in a spacious kitchen."
+
+3   feature          valid_2.jpg        3.5s       Caption: Comfortable bedroom
+                                                  VO     : "Unwind in a comfortable bedroom."
+
+4   feature          valid_0.jpg        3.5s       Caption: Clean bathroom
+                                                  VO     : "A clean bathroom completes the home."
+
+5   price_location   valid_1.jpg        4.4s       Caption: â‚¹85,00,000
+                                                           Sector 150, Noida
+                                                  VO     : "Priced at 85 lakh rupees, in Sector 150, Noida."
+
+6   cta              valid_2.jpg        4.8s       Caption: Book a site visit today
+                                                           +91-00000-00000
+                                                  VO     : "Book a site visit today. Contact details are on screen."
+
+PLAN WARNINGS (3):
+  âš   Custom script used for 6 scenes.
+  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   Only 3 image(s) available for 6 scenes; images were reused.
+======================================================================
+
+âœ“ Scene plan saved to: D:\Projects 2026\AIPropertyVideoGenerator-realtyAssistant\property-video-generator\output\script.json
+
+âœ“ Skipping video rendering (--no-video flag set).
+
+[WARNING] LLM API rate limit exceeded (HTTP 429)
+
+
+======================================================================
+SCENARIO 3: MISSING REQUIRED PROPERTY FIELD ('price')
+Command: python main.py --data <missing_price.json> --images input/samples/house_1/images --no-video
+Exit code: 1
+======================================================================
+
+============================================================
+  PROPERTY VIDEO GENERATOR â€” INPUT SUMMARY
+============================================================
+
+Property Details: [could not be loaded â€” see ERRORS below]
+
+Images (0 accepted):
+  [none]
+
+WARNINGS (2):
+  âš   Only 1 feature(s) provided; the video will be short. Recommended: 3â€“6 features.
+  âš   Optional field 'contact' is missing; no contact information will appear in the video.
+
+ERRORS (1):
+  âœ—  Missing required field 'price'. Provide a number (e.g. 4500000) or a string (e.g. 'â‚¹45,00,000').
+============================================================
+
+[WARNING] Pipeline validation failed with 1 error(s).
+[WARNING] Pipeline execution failed with 1 error(s).
+
+
+======================================================================
+SCENARIO 4: NO NARRATION / MUSIC (--no-audio)
+Command: python main.py --data input/samples/house_1/property.json --images input/samples/house_1/images --no-audio --no-video
+Exit code: 0
+======================================================================
+
+============================================================
+  PROPERTY VIDEO GENERATOR â€” INPUT SUMMARY
+============================================================
+
+Property Details:
+  Name          : Maple Residency
+  Location      : Sector 150, Noida
+  Price         : â‚¹85,00,000
+  Type          : Independent House
+  Features      : Spacious kitchen, Comfortable bedroom, Clean bathroom
+  CTA           : Book a site visit today
+  Contact       : +91-00000-00000
+  Tagline       : Where every room feels like home
+
+Images (4 accepted):
+  - 1_bathroom.jpg
+  - 1_bedroom.jpg
+  - 1_frontal.jpg
+  - 1_kitchen.jpg
+
+WARNINGS (3):
+  âš   Custom script used for 6 scenes.
+  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   Only 4 image(s) available for 6 scenes; images were reused.
+
+======================================================================
+  SCENE PLAN (Source: template | Total duration: 25.0s)
+======================================================================
+#   Type             Image              Duration   Caption / Voiceover
+----------------------------------------------------------------------
+1   title            1_frontal.jpg      5.2s       Caption: Maple Residency
+                                                           Independent House
+                                                  VO     : "Welcome to Maple Residency, an independent house in Sector 150, Noida."
+
+2   feature          1_kitchen.jpg      3.6s       Caption: Spacious kitchen
+                                                  VO     : "Start your day in a spacious kitchen."
+
+3   feature          1_bedroom.jpg      3.5s       Caption: Comfortable bedroom
+                                                  VO     : "Unwind in a comfortable bedroom."
+
+4   feature          1_bathroom.jpg     3.5s       Caption: Clean bathroom
+                                                  VO     : "A clean bathroom completes the home."
+
+5   price_location   1_frontal.jpg      4.4s       Caption: â‚¹85,00,000
+                                                           Sector 150, Noida
+                                                  VO     : "Priced at 85 lakh rupees, in Sector 150, Noida."
+
+6   cta              1_frontal.jpg      4.8s       Caption: Book a site visit today
+                                                           +91-00000-00000
+                                                  VO     : "Book a site visit today. Contact details are on screen."
+
+PLAN WARNINGS (3):
+  âš   Custom script used for 6 scenes.
+  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   Only 4 image(s) available for 6 scenes; images were reused.
+======================================================================
+
+âœ“ Scene plan saved to: D:\Projects 2026\AIPropertyVideoGenerator-realtyAssistant\property-video-generator\output\script.json
+
+âœ“ Skipping video rendering (--no-video flag set).
+
+[WARNING] LLM API rate limit exceeded (HTTP 429)
+

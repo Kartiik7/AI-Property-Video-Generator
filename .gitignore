@@ -17,6 +17,12 @@ output/*.json
 output/.cache/
 .cache/
 
+# Sample deliverables must be tracked
+!samples_output/*.mp4
+!samples_output/*.json
+!samples_output/*.txt
+!samples_output/*.md
+
 # macOS metadata
 .DS_Store
 

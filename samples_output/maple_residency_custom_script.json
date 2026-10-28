@@ -1,0 +1,52 @@
+{
+  "source": "custom",
+  "total_duration": 25.0,
+  "warnings": [
+    "Custom script used for 6 scenes.",
+    "Only 4 image(s) available for 6 scenes; images were reused."
+  ],
+  "scenes": [
+    {
+      "scene_type": "title",
+      "image_path": "input\\samples\\house_1\\images\\1_frontal.jpg",
+      "caption": "Maple Residency\nIndependent House",
+      "voiceover": "Welcome to Maple Residency, an independent house in Sector 150, Noida.",
+      "duration": 5.2
+    },
+    {
+      "scene_type": "feature",
+      "image_path": "input\\samples\\house_1\\images\\1_kitchen.jpg",
+      "caption": "Spacious kitchen",
+      "voiceover": "Start your day in a spacious kitchen.",
+      "duration": 3.6
+    },
+    {
+      "scene_type": "feature",
+      "image_path": "input\\samples\\house_1\\images\\1_bedroom.jpg",
+      "caption": "Comfortable bedroom",
+      "voiceover": "Unwind in a comfortable bedroom.",
+      "duration": 3.5
+    },
+    {
+      "scene_type": "feature",
+      "image_path": "input\\samples\\house_1\\images\\1_bathroom.jpg",
+      "caption": "Clean bathroom",
+      "voiceover": "A clean bathroom completes the home.",
+      "duration": 3.5
+    },
+    {
+      "scene_type": "price_location",
+      "image_path": "input\\samples\\house_1\\images\\1_frontal.jpg",
+      "caption": "₹85,00,000\nSector 150, Noida",
+      "voiceover": "Priced at 85 lakh rupees, in Sector 150, Noida.",
+      "duration": 4.4
+    },
+    {
+      "scene_type": "cta",
+      "image_path": "input\\samples\\house_1\\images\\1_frontal.jpg",
+      "caption": "Book a site visit today\n+91-00000-00000",
+      "voiceover": "Book a site visit today. Contact details are on screen.",
+      "duration": 4.8
+    }
+  ]
+}
