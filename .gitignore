@@ -22,5 +22,8 @@ output/*.mp4
 .idea/
 *.swp
 
+# Runtime logs
+logs/
+
 # NOTE: input/ sample files are intentionally NOT ignored.
 #       Place property images in input/images/ for testing.
