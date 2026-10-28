@@ -156,6 +156,7 @@ def test_duration_extension_from_narration(tmp_path):
         audio_clip, updated_durs = build_audio_tracks(
             plan=plan,
             temp_dir=temp_dir,
+            tts_provider="edge",
             no_music=True,
         )
 
@@ -193,6 +194,7 @@ def test_rate_speedup_when_total_exceeds_40s(tmp_path):
         audio_clip, updated_durs = build_audio_tracks(
             plan=plan,
             temp_dir=temp_dir,
+            tts_provider="edge",
             no_music=True,
         )
 
@@ -214,6 +216,7 @@ def test_tts_failure_path_preserves_plan_and_warns(tmp_path):
         audio_clip, updated_durs = build_audio_tracks(
             plan=plan,
             temp_dir=temp_dir,
+            tts_provider="edge",
             no_music=True,
             warnings=plan.warnings,
         )

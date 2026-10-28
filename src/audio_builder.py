@@ -18,8 +18,16 @@ import shutil
 import hashlib
 import asyncio
 import concurrent.futures
+import base64
+import json
+import wave
+import time
+import random
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Callable, Any
+from dotenv import load_dotenv
 
 import edge_tts
 from moviepy import (
@@ -32,14 +40,69 @@ from moviepy import (
 from src.models import ScenePlan, Scene
 from src.logger import setup_logger
 
+load_dotenv()
 logger = setup_logger()
 
-DEFAULT_VOICE = "en-IN-NeerjaNeural"
+DEFAULT_EDGE_VOICE = "en-IN-NeerjaNeural"
+DEFAULT_VOICE = DEFAULT_EDGE_VOICE
 DEFAULT_FALLBACK_VOICE = "en-US-JennyNeural"
+
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash-lite-tts"
+DEFAULT_GEMINI_VOICE = "Kore"
+DEFAULT_GEMINI_STYLE = "warm, clear, professional real-estate narrator, moderate pace"
+
 TTS_TIMEOUT = 20  # seconds
 CACHE_DIR = Path("output/.cache/tts")
 
 _AVAILABLE_VOICES_CACHE: list[str] | None = None
+
+
+def _safe_error_msg(exc: Exception) -> str:
+    """Format exception message without leaking any potential API keys."""
+    msg = str(exc)
+    msg = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]+", "Bearer [REDACTED]", msg)
+    for env_var in ("GEMINI_API_KEY", "LLM_API_KEY", "LLM_FALLBACK_API_KEY"):
+        key = os.getenv(env_var, "").strip()
+        if key and len(key) >= 4:
+            msg = msg.replace(key, "[REDACTED]")
+    return msg
+
+
+def get_gemini_api_key() -> str:
+    """Resolve Gemini API key for TTS.
+
+    Uses GEMINI_API_KEY if present. If missing, reuses LLM_API_KEY
+    only when LLM_BASE_URL contains 'generativelanguage.googleapis.com'.
+    """
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    if key:
+        return key
+    base_url = os.getenv("LLM_BASE_URL", "").strip().lower()
+    if "generativelanguage.googleapis.com" in base_url:
+        llm_key = os.getenv("LLM_API_KEY", "").strip()
+        if llm_key:
+            return llm_key
+    return ""
+
+
+def resolve_tts_provider(requested_provider: str | None = None) -> str:
+    """Resolve TTS provider: 'gemini' or 'edge'.
+
+    In 'auto' mode (default): 'gemini' if a Gemini key exists, else 'edge'.
+    """
+    prov = (requested_provider or os.getenv("TTS_PROVIDER", "auto")).strip().lower()
+    if prov == "gemini":
+        return "gemini"
+    if prov == "edge":
+        return "edge"
+    # Auto mode:
+    return "gemini" if bool(get_gemini_api_key()) else "edge"
+
+
+def get_tts_cache_key(provider: str, model: str, voice: str, style: str, text: str) -> str:
+    """Generate SHA256 cache key from provider, model, voice, style, and text."""
+    raw = f"{provider}|{model}|{voice}|{style}|{text}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 # ── Text Normalization for TTS ─────────────────────────────────────────────
@@ -159,7 +222,173 @@ def _format_rate_str(rate_percent: int) -> str:
     return f"{rate_percent}%"
 
 
-def synthesize_voiceover(
+def synthesize_gemini_voiceover(
+    text: str,
+    out_path: Path | str,
+    voice: str | None = None,
+    model: str | None = None,
+    style: str = DEFAULT_GEMINI_STYLE,
+    api_key: str | None = None,
+    use_cache: bool = True,
+) -> Path:
+    """Synthesize voiceover audio using Google Gemini TTS endpoint via urllib.
+
+    Args:
+        text: Raw or normalized voiceover text (treated as verbatim transcript).
+        out_path: Destination file path (saved as .wav).
+        voice: Gemini voice name (default: env TTS_GEMINI_VOICE or Kore).
+        model: Gemini model ID (default: env TTS_GEMINI_MODEL or gemini-3.8-flash-lite-tts).
+        style: Speech delivery style for speech_metadata/style field.
+        api_key: Explicit API key or resolved from env.
+        use_cache: Whether to check/store output/.cache/tts.
+
+    Returns:
+        Path to output WAV file.
+    """
+    out_path = Path(out_path).resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    spoken_text = prepare_spoken_text(text)
+    if not spoken_text:
+        raise ValueError("Cannot synthesize voiceover for empty text.")
+
+    key = api_key or get_gemini_api_key()
+    if not key:
+        raise ValueError("GEMINI_API_KEY is not configured.")
+
+    model_name = (model or os.getenv("TTS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL)).strip() or DEFAULT_GEMINI_MODEL
+    voice_name = (voice or os.getenv("TTS_GEMINI_VOICE", DEFAULT_GEMINI_VOICE)).strip() or DEFAULT_GEMINI_VOICE
+
+    # 1. Check cache by hash(provider + model + voice + style + text)
+    if use_cache:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_key = get_tts_cache_key("gemini", model_name, voice_name, style, spoken_text)
+        cached_file = CACHE_DIR / f"{cache_key}.wav"
+        if cached_file.exists() and cached_file.stat().st_size > 0:
+            shutil.copyfile(cached_file, out_path)
+            return out_path
+
+    # 2. Build JSON payload exactly as documented:
+    # Verbatim text in parts[].text; delivery style in parts[].speech_metadata.style
+    req_body = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": spoken_text,
+                        "speech_metadata": {
+                            "style": style,
+                        },
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {
+                        "voiceName": voice_name,
+                    }
+                }
+            },
+        },
+    }
+    req_bytes = json.dumps(req_body).encode("utf-8")
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+
+    # 3. HTTP Request with single retry on transient error (429, 5xx, timeout, network error)
+    last_err: Exception | None = None
+    for attempt in range(2):
+        req = urllib.request.Request(
+            endpoint,
+            data=req_bytes,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": key,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=TTS_TIMEOUT) as response:
+                resp_bytes = response.read()
+                resp_json = json.loads(resp_bytes.decode("utf-8"))
+
+            candidates = resp_json.get("candidates", [])
+            if not candidates:
+                raise ValueError("Gemini TTS response missing candidates.")
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                raise ValueError("Gemini TTS candidate missing content parts.")
+
+            inline_data = parts[0].get("inlineData") or parts[0].get("inline_data")
+            if not inline_data or "data" not in inline_data:
+                raise ValueError("Gemini TTS response missing inlineData audio.")
+
+            b64_audio = inline_data["data"]
+            pcm_bytes = base64.b64decode(b64_audio)
+            if not pcm_bytes:
+                raise ValueError("Gemini TTS returned empty audio payload.")
+
+            mime_type = inline_data.get("mimeType", "")
+            sample_rate = 24000
+            m_rate = re.search(r"rate=(\d+)", mime_type)
+            if m_rate:
+                try:
+                    sample_rate = int(m_rate.group(1))
+                except ValueError:
+                    pass
+
+            if pcm_bytes.startswith(b"RIFF"):
+                out_path.write_bytes(pcm_bytes)
+            else:
+                with wave.open(str(out_path), "wb") as wf:
+                    wf.setnchannels(1)      # mono
+                    wf.setsampwidth(2)      # 16-bit = 2 bytes
+                    wf.setframerate(sample_rate)
+                    wf.writeframes(pcm_bytes)
+
+            if out_path.exists() and out_path.stat().st_size > 0:
+                if use_cache:
+                    shutil.copyfile(out_path, cached_file)
+                return out_path
+            raise ValueError("Gemini TTS produced 0 bytes audio file.")
+
+        except urllib.error.HTTPError as exc:
+            safe_err = _safe_error_msg(exc)
+            last_err = RuntimeError(f"HTTP {exc.code}: {safe_err}")
+            if exc.code in (401, 403):
+                logger.warning("Gemini TTS authentication failed (HTTP %d); check GEMINI_API_KEY.", exc.code)
+                break
+            if attempt == 0 and (exc.code == 429 or exc.code >= 500):
+                backoff = 2.0 + random.uniform(0.1, 0.5)
+                logger.warning("Gemini TTS transient HTTP %d error. Retrying once after %.2fs...", exc.code, backoff)
+                time.sleep(backoff)
+                continue
+            break
+        except (TimeoutError, urllib.error.URLError) as exc:
+            safe_err = _safe_error_msg(exc)
+            last_err = RuntimeError(f"Network error: {safe_err}")
+            if attempt == 0:
+                backoff = 2.0 + random.uniform(0.1, 0.5)
+                logger.warning("Gemini TTS network timeout/error. Retrying once after %.2fs...", backoff)
+                time.sleep(backoff)
+                continue
+            break
+        except Exception as exc:
+            safe_err = _safe_error_msg(exc)
+            last_err = RuntimeError(safe_err)
+            if attempt == 0:
+                backoff = 2.0 + random.uniform(0.1, 0.5)
+                logger.warning("Gemini TTS error: %s. Retrying once after %.2fs...", safe_err, backoff)
+                time.sleep(backoff)
+                continue
+            break
+
+    raise RuntimeError(f"Gemini TTS synthesis failed: {last_err}")
+
+
+def synthesize_edge_voiceover(
     text: str,
     out_path: Path | str,
     voice: str = DEFAULT_VOICE,
@@ -186,13 +415,12 @@ def synthesize_voiceover(
         raise ValueError("Cannot synthesize voiceover for empty text.")
 
     rate_str = _format_rate_str(rate)
-    voice = resolve_voice(voice)
+    resolved_v = resolve_voice(voice)
 
-    # 1. Check cache
+    # 1. Check cache by hash(provider + model + voice + style + text)
     if use_cache:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        key_raw = f"{spoken_text}|{voice}|{rate_str}".encode("utf-8")
-        cache_key = hashlib.sha256(key_raw).hexdigest()
+        cache_key = get_tts_cache_key("edge", "edge-tts", resolved_v, rate_str, spoken_text)
         cached_file = CACHE_DIR / f"{cache_key}.mp3"
 
         if cached_file.exists() and cached_file.stat().st_size > 0:
@@ -204,21 +432,49 @@ def synthesize_voiceover(
     for attempt in range(2):
         try:
             async def _do_synth():
-                communicate = edge_tts.Communicate(spoken_text, voice=voice, rate=rate_str)
+                communicate = edge_tts.Communicate(spoken_text, voice=resolved_v, rate=rate_str)
                 await communicate.save(str(out_path))
 
             _run_async_in_thread(_do_synth, timeout=TTS_TIMEOUT)
 
             if out_path.exists() and out_path.stat().st_size > 0:
-                # Cache successful output
                 if use_cache:
                     shutil.copyfile(out_path, cached_file)
                 return out_path
         except Exception as exc:
             last_err = exc
-            logger.warning("TTS attempt %d failed for voice '%s': %s", attempt + 1, voice, exc)
+            logger.warning("TTS attempt %d failed for voice '%s': %s", attempt + 1, resolved_v, exc)
 
     raise RuntimeError(f"edge-tts synthesis failed after retry: {last_err}")
+
+
+def synthesize_voiceover(
+    text: str,
+    out_path: Path | str,
+    voice: str | None = None,
+    rate: int = 0,
+    use_cache: bool = True,
+    provider: str = "edge",
+    model: str | None = None,
+    style: str = DEFAULT_GEMINI_STYLE,
+) -> Path:
+    """General dispatcher for voiceover synthesis."""
+    if provider == "gemini":
+        return synthesize_gemini_voiceover(
+            text=text,
+            out_path=out_path,
+            voice=voice,
+            model=model,
+            style=style,
+            use_cache=use_cache,
+        )
+    return synthesize_edge_voiceover(
+        text=text,
+        out_path=out_path,
+        voice=voice or DEFAULT_VOICE,
+        rate=rate,
+        use_cache=use_cache,
+    )
 
 
 # ── Scene Timeline Recalculation & Narration Assembly ──────────────────────
@@ -226,7 +482,8 @@ def synthesize_voiceover(
 def build_audio_tracks(
     plan: ScenePlan,
     temp_dir: Path,
-    voice: str = DEFAULT_VOICE,
+    voice: str | None = None,
+    tts_provider: str | None = None,
     base_rate: int = 0,
     music_path: Path | str | None = None,
     no_audio: bool = False,
@@ -236,16 +493,10 @@ def build_audio_tracks(
 ) -> tuple[AudioClip | None, list[float]]:
     """Synthesize voiceovers for all scenes, sync timeline durations, and mix music.
 
-    Args:
-        plan: ScenePlan with scenes and voiceover texts.
-        temp_dir: Directory for temporary audio clips.
-        voice: Requested TTS voice.
-        base_rate: Requested initial TTS speed rate.
-        music_path: Optional explicit background music file.
-        no_audio: If True, returns None without synthesizing.
-        no_music: If True, skips background music.
-        no_narration: If True, skips voiceover synthesis.
-        warnings: Optional list to append warnings to.
+    Maintains voice consistency: never mixes voices within one video.
+    If Gemini fails for ANY scene, retries once with backoff; if it still fails,
+    regenerates ALL scenes with edge-tts and records ONE warning.
+    If both fail, falls back to silent video.
 
     Returns:
         (composite_audio_or_none, updated_scene_durations)
@@ -256,45 +507,143 @@ def build_audio_tracks(
     num_scenes = len(plan.scenes)
     original_durations = [s.duration for s in plan.scenes]
 
-    if no_audio or (no_music and no_narration):
-        return None, original_durations
-
     temp_dir.mkdir(parents=True, exist_ok=True)
     narration_files: list[Path | None] = [None] * num_scenes
     narration_durations: list[float] = [0.0] * num_scenes
 
-    # ── 1. Synthesize narration for each scene ──────────────────────────────
+    chosen_provider = resolve_tts_provider(tts_provider)
+    actual_provider = "none"
+    actual_voice = "none"
+    actual_model = "none"
+
+    if no_audio or (no_music and no_narration):
+        plan.metadata["tts_provider"] = "none"
+        plan.metadata["tts_voice"] = "none"
+        plan.metadata["tts_model"] = "none"
+        return None, original_durations
+
     tts_failed = False
+
+    # ── 1. Synthesize narration for each scene ──────────────────────────────
     if not no_narration:
-        for i, scene in enumerate(plan.scenes):
-            if not scene.voiceover.strip():
-                continue
+        if chosen_provider == "gemini":
+            gemini_model = os.getenv("TTS_GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+            gemini_voice = voice or os.getenv("TTS_GEMINI_VOICE", DEFAULT_GEMINI_VOICE).strip() or DEFAULT_GEMINI_VOICE
+            gemini_failed = False
+            gemini_err_str = ""
 
-            audio_file = temp_dir / f"scene_{i+1}_vo.mp3"
-            try:
-                synthesize_voiceover(
-                    text=scene.voiceover,
-                    out_path=audio_file,
-                    voice=voice,
-                    rate=base_rate,
-                )
-                # Measure actual narration duration
-                with AudioFileClip(str(audio_file)) as clip:
-                    dur = float(clip.duration)
+            for i, scene in enumerate(plan.scenes):
+                if not scene.voiceover.strip():
+                    continue
+                audio_file = temp_dir / f"scene_{i+1}_vo_gemini.wav"
+                try:
+                    synthesize_gemini_voiceover(
+                        text=scene.voiceover,
+                        out_path=audio_file,
+                        voice=gemini_voice,
+                        model=gemini_model,
+                    )
+                    with AudioFileClip(str(audio_file)) as clip:
+                        dur = float(clip.duration)
+                    narration_files[i] = audio_file
+                    narration_durations[i] = dur
+                except Exception as exc:
+                    gemini_failed = True
+                    gemini_err_str = _safe_error_msg(exc)
+                    logger.warning("Gemini TTS failed for scene %d: %s. Falling back to edge-tts for all scenes.", i + 1, gemini_err_str)
+                    break
 
-                narration_files[i] = audio_file
-                narration_durations[i] = dur
-            except Exception as exc:
-                logger.warning("TTS generation failed for scene %d: %s", i + 1, exc)
+            if gemini_failed:
+                # Add ONE warning for Gemini failure and regenerate ALL scenes with edge-tts
+                warn_msg = f"Gemini TTS failed ({gemini_err_str}); regenerated all narration with edge-tts."
+                if not any("Gemini TTS failed" in w for w in warnings):
+                    warnings.append(warn_msg)
+
+                narration_files = [None] * num_scenes
+                narration_durations = [0.0] * num_scenes
+
+                edge_voice = resolve_voice(voice if (voice and voice.startswith("en-")) else None)
+                edge_failed = False
+                for i, scene in enumerate(plan.scenes):
+                    if not scene.voiceover.strip():
+                        continue
+                    audio_file = temp_dir / f"scene_{i+1}_vo_edge.mp3"
+                    try:
+                        synthesize_voiceover(
+                            text=scene.voiceover,
+                            out_path=audio_file,
+                            voice=edge_voice,
+                            rate=base_rate,
+                        )
+                        with AudioFileClip(str(audio_file)) as clip:
+                            dur = float(clip.duration)
+                        narration_files[i] = audio_file
+                        narration_durations[i] = dur
+                    except Exception as exc:
+                        edge_failed = True
+                        logger.warning("edge-tts fallback failed for scene %d: %s", i + 1, exc)
+                        break
+
+                if edge_failed:
+                    warn_silent = "Narration unavailable; exporting without narration."
+                    if warn_silent not in warnings:
+                        warnings.append(warn_silent)
+                    narration_files = [None] * num_scenes
+                    narration_durations = [0.0] * num_scenes
+                    tts_failed = True
+                    actual_provider = "none"
+                    actual_voice = "none"
+                    actual_model = "none"
+                else:
+                    actual_provider = "edge"
+                    actual_voice = edge_voice
+                    actual_model = "edge-tts"
+            else:
+                actual_provider = "gemini"
+                actual_voice = gemini_voice
+                actual_model = gemini_model
+
+        else:  # chosen_provider == "edge"
+            edge_voice = resolve_voice(voice)
+            edge_failed = False
+            for i, scene in enumerate(plan.scenes):
+                if not scene.voiceover.strip():
+                    continue
+                audio_file = temp_dir / f"scene_{i+1}_vo_edge.mp3"
+                try:
+                    synthesize_voiceover(
+                        text=scene.voiceover,
+                        out_path=audio_file,
+                        voice=edge_voice,
+                        rate=base_rate,
+                    )
+                    with AudioFileClip(str(audio_file)) as clip:
+                        dur = float(clip.duration)
+                    narration_files[i] = audio_file
+                    narration_durations[i] = dur
+                except Exception as exc:
+                    edge_failed = True
+                    logger.warning("edge-tts generation failed for scene %d: %s", i + 1, exc)
+                    break
+
+            if edge_failed:
+                warn_msg = "Narration unavailable; exporting without narration."
+                if warn_msg not in warnings:
+                    warnings.append(warn_msg)
+                narration_files = [None] * num_scenes
+                narration_durations = [0.0] * num_scenes
                 tts_failed = True
-                break
+                actual_provider = "none"
+                actual_voice = "none"
+                actual_model = "none"
+            else:
+                actual_provider = "edge"
+                actual_voice = edge_voice
+                actual_model = "edge-tts"
 
-    if tts_failed:
-        warn_msg = "Narration unavailable; exporting without narration."
-        if warn_msg not in warnings:
-            warnings.append(warn_msg)
-        narration_files = [None] * num_scenes
-        narration_durations = [0.0] * num_scenes
+    plan.metadata["tts_provider"] = actual_provider
+    plan.metadata["tts_voice"] = actual_voice
+    plan.metadata["tts_model"] = actual_model
 
     # ── 2. Sync scene durations ─────────────────────────────────────────────
     # Base formula: scene duration = max(planned duration, narration length + 0.7 s)

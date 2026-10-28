@@ -50,6 +50,7 @@ class ScenePlan:
     scenes: list[Scene]
     source: str           # "template" | "llm"
     warnings: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
 
     @property
     def total_duration(self) -> float:
@@ -58,7 +59,7 @@ class ScenePlan:
 
     def to_dict(self) -> dict:
         """Convert to a JSON-serializable dictionary."""
-        return {
+        d = {
             "source": self.source,
             "total_duration": self.total_duration,
             "warnings": self.warnings,
@@ -73,3 +74,6 @@ class ScenePlan:
                 for s in self.scenes
             ],
         }
+        if self.metadata:
+            d["metadata"] = self.metadata
+        return d

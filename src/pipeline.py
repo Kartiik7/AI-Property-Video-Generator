@@ -38,6 +38,9 @@ class PipelineOptions:
     music_path: Path | str | None = None
     voice: str = "en-IN-NeerjaNeural"
     tts_rate: int = 0
+    tts_provider: str | None = None
+    tts_voice: str | None = None
+
 
 
 _py_property = property
@@ -220,10 +223,13 @@ def run_pipeline(
     with tempfile.TemporaryDirectory() as audio_temp_dir:
         audio_clip = None
         try:
+            # tts_voice overrides voice if explicitly provided
+            effective_voice = opts.tts_voice or opts.voice
             audio_clip, _ = build_audio_tracks(
                 plan=plan,
                 temp_dir=Path(audio_temp_dir),
-                voice=opts.voice,
+                voice=effective_voice,
+                tts_provider=opts.tts_provider,
                 base_rate=opts.tts_rate,
                 music_path=opts.music_path,
                 no_audio=opts.no_audio,

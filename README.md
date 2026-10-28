@@ -7,6 +7,16 @@ narration/background music.
 > **Phase 3 complete** — video rendering with text overlays, Ken Burns motion, and transitions.
 > Audio/TTS narration will be attached in Phase 4.
 
+## Dataset Attribution
+
+The bundled house images come from the [Houses Dataset](https://github.com/emanhamed/houses-dataset)
+by Eman Ahmed and Mohamed Moustafa. Please cite their paper when using the dataset:
+
+> Ahmed, E. H. and Moustafa, M. (2016). *House Price Estimation from Visual and
+> Textual Features*. Proceedings of the 8th International Joint Conference on
+> Computational Intelligence (IJCCI 2016), 62–68.
+> DOI: [10.5220/0006040700620068](https://doi.org/10.5220/0006040700620068).
+
 ---
 
 ## Generating the Video
@@ -250,4 +260,3 @@ Properties can optionally specify exact scene copy via `custom_script`:
 - **Fact-Checked**: Every custom caption and voiceover is strictly vetted against the property's declared facts. Formatted and spoken price forms (e.g. `₹85,00,000`, `85 lakh rupees`) are recognized.
 - **Graceful Scene-by-Scene Fallback**: If any custom line fails the fact check or exceeds layout constraints (captions: max 2 lines × 38 characters; voiceovers: max 18 words), the system automatically falls back to template generation for that scene only and logs an informative warning.
 - **Room-Aware Image Mapping**: Features automatically map to matching room images (e.g. kitchen feature to kitchen photo) when tagged photos (`_kitchen.jpg`, `_bedroom.jpg`, `_bathroom.jpg`, `_frontal.jpg`) are present.
-

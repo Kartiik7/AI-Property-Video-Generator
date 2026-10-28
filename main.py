@@ -128,8 +128,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--voice",
         metavar="NAME",
-        default="en-IN-NeerjaNeural",
-        help="edge-tts voice name (default: en-IN-NeerjaNeural).",
+        default=None,
+        help="edge-tts voice name override (default: en-IN-NeerjaNeural). Also settable via --tts-voice.",
+    )
+    p.add_argument(
+        "--tts-provider",
+        metavar="PROVIDER",
+        default=None,
+        choices=["auto", "gemini", "edge"],
+        help="TTS provider: auto (default), gemini, or edge. Overrides TTS_PROVIDER env var.",
+    )
+    p.add_argument(
+        "--tts-voice",
+        metavar="VOICE",
+        default=None,
+        help="Voice name for TTS (edge-tts ShortName or Gemini voice). Overrides --voice and env vars.",
     )
     p.add_argument(
         "--tts-rate",
@@ -280,6 +293,9 @@ def main() -> int:
     else:
         use_llm = has_api_key
 
+    # Resolve effective voice: --tts-voice > --voice > default
+    effective_voice = args.tts_voice or args.voice
+
     options = PipelineOptions(
         use_llm=use_llm,
         no_video=args.no_video,
@@ -290,8 +306,10 @@ def main() -> int:
         no_audio=args.no_audio,
         no_music=args.no_music,
         music_path=args.music,
-        voice=args.voice,
+        voice=effective_voice or "en-IN-NeerjaNeural",
         tts_rate=args.tts_rate,
+        tts_provider=args.tts_provider,
+        tts_voice=args.tts_voice,
     )
 
     header_printed = False
@@ -347,6 +365,15 @@ def main() -> int:
         print(f"  Resolution  : {res_str}")
         print(f"  File size   : {file_size_mb:.2f} MB ({file_size_bytes:,} bytes)")
         print(f"  Render time : {render_time:.1f}s")
+        # TTS metadata from plan.metadata (set by build_audio_tracks)
+        tts_meta = result.plan.metadata if result.plan else {}
+        tts_prov = tts_meta.get("tts_provider", "none")
+        tts_voice_used = tts_meta.get("tts_voice", "none")
+        tts_model_used = tts_meta.get("tts_model", "none")
+        print(f"  TTS provider: {tts_prov}")
+        print(f"  TTS voice   : {tts_voice_used}")
+        if tts_prov == "gemini":
+            print(f"  TTS model   : {tts_model_used}")
         print("\n  To view the video:")
         print(f'    Windows (PowerShell): Start-Process "{result.video_path}"')
         print(f'    macOS               : open "{result.video_path}"')
