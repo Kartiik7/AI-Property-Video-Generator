@@ -1,11 +1,19 @@
 # AI Property Video Generator
 
-A Python tool that takes property details and 4–8 images and exports a polished
-20–40 second promotional MP4 with text overlays, transitions, and optional
-narration/background music.
+A recruiter-friendly Python application that turns property facts and 4–8 photos
+into a 20–40 second promotional MP4. It supports deterministic templates,
+optional fact-checked LLM copy, narration, background music, and a Streamlit UI.
+The pipeline is designed to degrade cleanly when network services or media inputs fail.
 
-> **Phase 3 complete** — video rendering with text overlays, Ken Burns motion, and transitions.
-> Audio/TTS narration will be attached in Phase 4.
+```mermaid
+flowchart LR
+  I[Property JSON + images] --> V[Validation]
+  V --> S[Template or LLM script]
+  S --> F[Fact checks + length limits]
+  F --> O[Scenes and overlays]
+  O --> A[Narration + music]
+  A --> M[MoviePy MP4]
+```
 
 ## Dataset Attribution
 
@@ -139,6 +147,98 @@ Features:
 ```bash
 pytest tests/ -v
 ```
+
+### 7 — Rebuild sample deliverables
+
+```bash
+python make_samples.py
+```
+
+This regenerates the files in [`samples_output/`](./samples_output/) and probes
+each MP4 with [`tools/verify_video.py`](./tools/verify_video.py). LLM output is
+optional; the command records a skip or template fallback when no working key is
+available.
+
+### Command-line flags
+
+| Flag | Purpose |
+|---|---|
+| `--data PATH` | Property JSON input (required unless `--interactive` or `--check`) |
+| `--images PATH` | Image directory; defaults to `input/images` |
+| `--use-llm` / `--no-llm` | Enable LLM copy or force deterministic templates |
+| `--script-out PATH` | Write the scene plan JSON |
+| `--out PATH` | Destination MP4 |
+| `--no-video` | Generate only the scene plan |
+| `--size 720p\|1080p` | Output resolution |
+| `--fps INT` | Frame rate |
+| `--no-audio` / `--no-music` | Disable all audio or only background music |
+| `--music PATH` | Override the background music file |
+| `--voice NAME` / `--tts-voice VOICE` | Select the TTS voice |
+| `--tts-provider auto\|gemini\|edge` | Select TTS provider |
+| `--tts-rate INT` | Adjust edge-tts speech rate as a percentage |
+| `--open` | Open the rendered video in the default player |
+| `--check` | Check installed dependencies and optional capabilities |
+
+## Architecture and key decisions
+
+- **Template-first** keeps the core workflow deterministic, offline-capable, and
+  usable without an API key. LLM mode is an enhancement, not a dependency.
+- **Per-scene fact checking** limits blast radius: an invalid generated scene is
+  replaced while valid scenes remain intact.
+- **MoviePy + Pillow** provide portable compositing, text rendering, transitions,
+  and audio mixing while `imageio-ffmpeg` supplies a bundled FFmpeg binary.
+- **TTS fallback** prefers configured Gemini TTS, then edge-tts, and preserves a
+  usable video if narration or music cannot be synthesized.
+- **Blurred-background fill** preserves the source image aspect ratio without
+  stretching or black bars.
+- **Crossfades and Ken Burns motion** make a short photo sequence feel polished
+  without requiring a heavyweight video-editing service.
+
+## How AI is used
+
+The optional LLM receives only the declared property facts and the scene skeleton.
+It writes captions and short voiceovers; it does not receive arbitrary files or
+an open-ended instruction to invent amenities. Outputs are checked for foreign
+numbers, unlisted amenities, banned claims, phone-number narration, caption limits,
+and voiceover word limits. One targeted retry is attempted for invalid scenes,
+then those scenes fall back individually to templates. The LLM chain is primary
+provider -> configured fallback provider -> template.
+
+TTS uses Gemini when selected and configured, with edge-tts as the offline/network
+fallback. API keys are never placed in scripts, plans, logs, or sample reports.
+
+## Graceful error handling
+
+| Situation | Behavior |
+|---|---|
+| Missing property JSON or required field | Clear validation error; no traceback |
+| Missing or corrupt image | Warning/error identifies the input; valid images continue when possible |
+| LLM timeout, rate limit, or bad response | Retry policy, fallback provider, then template copy |
+| Invalid LLM scene | Targeted retry, then per-scene template replacement |
+| Gemini TTS unavailable | Warning and edge-tts fallback |
+| Music missing or unreadable | Warning; narration/video can continue |
+| No audio requested | Silent video is produced intentionally |
+
+## Limitations and future work
+
+The current renderer is optimized for short promotional clips and local files,
+not long-form editing. Provider availability, network access, voice availability,
+font coverage, and rate limits vary by machine. Future work could add subtitle
+export, more aspect ratios, stronger visual quality checks, persistent provider
+health metrics, and a fully local TTS option.
+
+## Troubleshooting
+
+- **PowerShell blocks activation:** run
+  `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, then activate
+  `.\venv\Scripts\Activate.ps1`.
+- **`python` uses the wrong interpreter:** activate the venv or run
+  `.\venv\Scripts\python.exe`.
+- **No internet:** use `--no-llm --tts-provider edge`; template mode remains
+  available and music uses the local file.
+- **Rate limits:** wait, use `--no-llm`, or configure the fallback provider.
+- **Font/glyph warnings:** install a Unicode-capable system font and use plain
+  ASCII captions where possible.
 
 ---
 
