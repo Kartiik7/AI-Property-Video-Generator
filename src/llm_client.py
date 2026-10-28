@@ -32,9 +32,10 @@ def _safe_error_msg(exc: Exception) -> str:
     """Format exception message without leaking any potential API keys."""
     msg = str(exc)
     msg = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]+", "Bearer [REDACTED]", msg)
-    api_key = os.getenv("LLM_API_KEY", "").strip()
-    if api_key and len(api_key) > 4:
-        msg = msg.replace(api_key, "[REDACTED]")
+    for env_var in ("LLM_API_KEY", "GEMINI_API_KEY"):
+        key = os.getenv(env_var, "").strip()
+        if key and len(key) > 4:
+            msg = msg.replace(key, "[REDACTED]")
     return msg
 
 
@@ -212,7 +213,7 @@ def generate_scene_copy(
     warnings: list[str] = []
 
     # ── 1. Check API key ───────────────────────────────────────────────────
-    api_key = os.getenv("LLM_API_KEY", "").strip()
+    api_key = os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         warnings.append(
             "LLM mode requested but LLM_API_KEY is not set. "
@@ -220,8 +221,12 @@ def generate_scene_copy(
         )
         return None, warnings
 
-    model = os.getenv("LLM_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    base_url = os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL).strip().rstrip("/") or DEFAULT_BASE_URL
+    is_gemini_key = bool(os.getenv("GEMINI_API_KEY", "").strip()) and not os.getenv("LLM_API_KEY", "").strip()
+    default_base = "https://generativelanguage.googleapis.com/v1beta/openai" if is_gemini_key else DEFAULT_BASE_URL
+    default_model = "gemini-2.5-flash" if is_gemini_key else DEFAULT_MODEL
+
+    model = os.getenv("LLM_MODEL", default_model).strip() or default_model
+    base_url = os.getenv("LLM_BASE_URL", default_base).strip().rstrip("/") or default_base
     endpoint = f"{base_url}/chat/completions"
 
     # ── 2. Build prompts sending ONLY property facts + scene skeleton ───────

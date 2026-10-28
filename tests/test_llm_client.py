@@ -348,3 +348,33 @@ def test_custom_script_takes_priority_over_llm(sample_prop):
             assert plan.scenes[1].caption == "Covered Parking"
             # 4 of 5 scenes from LLM -> mixed
             assert plan.source == "mixed (4 of 5 scenes from LLM)"
+
+
+# ── 11. GEMINI_API_KEY Support ──────────────────────────────────────────────
+
+def test_gemini_api_key_automatically_used(sample_prop, skeleton):
+    valid_content = json.dumps({
+        "scenes": [
+            {"scene_index": 1, "caption": "Green Valley 2BHK\nApartment", "voiceover": "Welcome to Green Valley 2BHK in Baner."},
+            {"scene_index": 2, "caption": "Covered Parking", "voiceover": "Includes covered parking for your vehicle."},
+            {"scene_index": 3, "caption": "Modular Kitchen", "voiceover": "Features a modern modular kitchen."},
+            {"scene_index": 4, "caption": "₹45,00,000\nBaner, Pune", "voiceover": "Priced at 45 lakh rupees in Baner."},
+            {"scene_index": 5, "caption": "Book a site visit today\n+91-00000-00000", "voiceover": "Book a site visit today, details on screen."},
+        ]
+    })
+    recorded_req = []
+
+    def mock_open(req, timeout=20):
+        recorded_req.append(req)
+        return _mock_http_response(valid_content)
+
+    # When GEMINI_API_KEY is in env and LLM_API_KEY is not
+    with patch.dict("os.environ", {"GEMINI_API_KEY": "AIzaSyFakeGeminiKey", "LLM_API_KEY": ""}):
+        with patch("urllib.request.urlopen", side_effect=mock_open):
+            scenes, warnings = generate_scene_copy(sample_prop, skeleton)
+            assert scenes is not None
+            assert len(recorded_req) == 1
+            # Verify it targeted the Gemini endpoint by default
+            assert "generativelanguage.googleapis.com" in recorded_req[0].full_url
+            body = json.loads(recorded_req[0].data.decode("utf-8"))
+            assert body["model"] == "gemini-2.5-flash"

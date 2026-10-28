@@ -220,7 +220,7 @@ def main() -> int:
         return 1
 
     logger.info("Input validation passed — building scene plan.")
-    has_api_key = bool(os.getenv("LLM_API_KEY", "").strip())
+    has_api_key = bool(os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip())
     if args.no_llm:
         use_llm = False
     elif args.use_llm:

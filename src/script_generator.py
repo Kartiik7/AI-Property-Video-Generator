@@ -434,7 +434,7 @@ def build_scene_plan(
     and targeted retry. Failing scenes fall back to deterministic template text.
     """
     if use_llm is None:
-        use_llm = bool(os.getenv("LLM_API_KEY", "").strip())
+        use_llm = bool(os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip())
 
     warnings: list[str] = []
 
