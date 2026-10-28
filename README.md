@@ -103,7 +103,22 @@ python main.py --interactive
 Features are entered one per line; press **Enter** on a blank line to finish.
 Press **Ctrl+C** at any time to cancel cleanly (exits with code 130).
 
-### 5 — Run tests
+### 5 — Run the Streamlit Web UI
+
+Launch the interactive web interface:
+
+```bash
+streamlit run app.py
+```
+
+Features:
+- Fill in property details or load bundled sample data with one click.
+- Upload 4–8 photos with real-time thumbnail gallery and validation alerts.
+- Toggle AI Script generation, voiceover narration, and background music.
+- Multi-stage progress tracking (validation, script, audio, rendering).
+- In-browser MP4 video preview, scene storyboard table, and one-click downloads.
+
+### 6 — Run tests
 
 ```bash
 pytest tests/ -v

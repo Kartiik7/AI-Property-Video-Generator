@@ -231,6 +231,7 @@ def build_audio_tracks(
     music_path: Path | str | None = None,
     no_audio: bool = False,
     no_music: bool = False,
+    no_narration: bool = False,
     warnings: list[str] | None = None,
 ) -> tuple[AudioClip | None, list[float]]:
     """Synthesize voiceovers for all scenes, sync timeline durations, and mix music.
@@ -243,6 +244,7 @@ def build_audio_tracks(
         music_path: Optional explicit background music file.
         no_audio: If True, returns None without synthesizing.
         no_music: If True, skips background music.
+        no_narration: If True, skips voiceover synthesis.
         warnings: Optional list to append warnings to.
 
     Returns:
@@ -254,7 +256,7 @@ def build_audio_tracks(
     num_scenes = len(plan.scenes)
     original_durations = [s.duration for s in plan.scenes]
 
-    if no_audio:
+    if no_audio or (no_music and no_narration):
         return None, original_durations
 
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -263,28 +265,29 @@ def build_audio_tracks(
 
     # ── 1. Synthesize narration for each scene ──────────────────────────────
     tts_failed = False
-    for i, scene in enumerate(plan.scenes):
-        if not scene.voiceover.strip():
-            continue
+    if not no_narration:
+        for i, scene in enumerate(plan.scenes):
+            if not scene.voiceover.strip():
+                continue
 
-        audio_file = temp_dir / f"scene_{i+1}_vo.mp3"
-        try:
-            synthesize_voiceover(
-                text=scene.voiceover,
-                out_path=audio_file,
-                voice=voice,
-                rate=base_rate,
-            )
-            # Measure actual narration duration
-            with AudioFileClip(str(audio_file)) as clip:
-                dur = float(clip.duration)
+            audio_file = temp_dir / f"scene_{i+1}_vo.mp3"
+            try:
+                synthesize_voiceover(
+                    text=scene.voiceover,
+                    out_path=audio_file,
+                    voice=voice,
+                    rate=base_rate,
+                )
+                # Measure actual narration duration
+                with AudioFileClip(str(audio_file)) as clip:
+                    dur = float(clip.duration)
 
-            narration_files[i] = audio_file
-            narration_durations[i] = dur
-        except Exception as exc:
-            logger.warning("TTS generation failed for scene %d: %s", i + 1, exc)
-            tts_failed = True
-            break
+                narration_files[i] = audio_file
+                narration_durations[i] = dur
+            except Exception as exc:
+                logger.warning("TTS generation failed for scene %d: %s", i + 1, exc)
+                tts_failed = True
+                break
 
     if tts_failed:
         warn_msg = "Narration unavailable; exporting without narration."

@@ -132,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="TTS speed percentage adjustment (e.g. 10 for +10%%, default: 0).",
     )
+    p.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the finished video in the default media player upon completion.",
+    )
     return p
 
 
@@ -219,35 +224,44 @@ def print_scene_plan(plan) -> None:
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
+def open_video_in_player(path: Path) -> None:
+    """Open video file in the OS default video player."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(path))
+        elif sys.platform == "darwin":
+            import subprocess
+            subprocess.Popen(["open", str(path)])
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception as exc:
+        logger.warning("Could not automatically open video: %s", exc)
+        print(f"\n⚠ Could not open media player: {exc}")
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
     images_dir = Path(args.images)
 
-    import time
-    from src.input_loader import load_from_json, load_interactive
-    from src.script_generator import build_scene_plan
-    from src.video_builder import build_video, slugify
-    import json
+    from src.input_loader import load_interactive
+    from src.pipeline import run_pipeline, PipelineOptions
 
+    # Handle interactive input
     if args.interactive:
-        result = load_interactive(images_dir)
-        if any("cancelled by user" in e.lower() or "ctrl+c" in e.lower() for e in result.errors):
+        load_res = load_interactive(images_dir)
+        if any("cancelled by user" in e.lower() or "ctrl+c" in e.lower() for e in load_res.errors):
             return 130
+        prop_input = load_res.property
+        if not load_res.ok:
+            print_summary(load_res)
+            return 1
     else:
-        result = load_from_json(Path(args.data), images_dir)
+        prop_input = Path(args.data)
 
-    print_summary(result)
-
-    if not result.ok:
-        print("=" * 60)
-        logger.warning(
-            "Input validation failed with %d error(s).", len(result.errors)
-        )
-        return 1
-
-    logger.info("Input validation passed — building scene plan.")
+    # Determine LLM preference
     has_api_key = bool(os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip())
     if args.no_llm:
         use_llm = False
@@ -256,98 +270,81 @@ def main() -> int:
     else:
         use_llm = has_api_key
 
-    plan = build_scene_plan(result.property, result.images, use_llm=use_llm)
-    print_scene_plan(plan)
+    options = PipelineOptions(
+        use_llm=use_llm,
+        no_video=args.no_video,
+        size=args.size,
+        fps=args.fps,
+        out_path=args.out,
+        script_out=args.script_out,
+        no_audio=args.no_audio,
+        no_music=args.no_music,
+        music_path=args.music,
+        voice=args.voice,
+        tts_rate=args.tts_rate,
+    )
 
-    # Save script JSON
-    script_out = Path(args.script_out)
-    try:
-        script_out.parent.mkdir(parents=True, exist_ok=True)
-        script_out.write_text(
-            json.dumps(plan.to_dict(), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        print(f"\n✓ Scene plan saved to: {script_out}")
-    except Exception as exc:
-        print(f"\n⚠ Could not save scene plan to '{script_out}': {exc}")
+    header_printed = False
 
-    # Video rendering
+    def progress_cb(stage: str, frac: float, msg: str) -> None:
+        nonlocal header_printed
+        if stage == "render":
+            if not header_printed:
+                res = "1920x1080" if args.size == "1080p" else "1280x720"
+                SEP = "=" * 70
+                print(f"\n{SEP}")
+                print(f"  RENDERING VIDEO ({args.size} [{res}] @ {args.fps} fps)")
+                print(SEP)
+                header_printed = True
+            if "scene" in msg.lower():
+                print(f"  {msg}")
+
+    result = run_pipeline(
+        property_input=prop_input,
+        images_input=images_dir,
+        options=options,
+        progress_cb=progress_cb,
+    )
+
+    print_summary(result)
+
+    if not result.ok:
+        print("=" * 60)
+        logger.warning("Pipeline execution failed with %d error(s).", len(result.errors))
+        return 1
+
+    if result.plan:
+        print_scene_plan(result.plan)
+        if args.script_out:
+            print(f"\n✓ Scene plan saved to: {args.script_out}")
+
     if args.no_video:
         print("\n✓ Skipping video rendering (--no-video flag set).")
         return 0
 
-    if args.out:
-        out_path = Path(args.out)
-    else:
-        slug = slugify(result.property.name)
-        out_path = BASE_DIR / "output" / f"{slug}.mp4"
+    if result.video_path:
+        file_size_bytes = result.file_size
+        file_size_mb = file_size_bytes / (1024 * 1024)
+        render_time = result.timings.get("render", 0.0)
+        res_str = "1920x1080 (1080p)" if args.size == "1080p" else "1280x720 (720p)"
 
-    res_tuple = (1920, 1080) if args.size == "1080p" else (1280, 720)
+        SEP = "=" * 70
+        print(f"\n{SEP}")
+        print("  VIDEO GENERATION COMPLETE")
+        print(SEP)
+        print(f"  Output file : {result.video_path}")
+        print(f"  Duration    : {result.plan.total_duration}s")
+        print(f"  Resolution  : {res_str}")
+        print(f"  File size   : {file_size_mb:.2f} MB ({file_size_bytes:,} bytes)")
+        print(f"  Render time : {render_time:.1f}s")
+        print("\n  To view the video:")
+        print(f'    Windows (PowerShell): Start-Process "{result.video_path}"')
+        print(f'    macOS               : open "{result.video_path}"')
+        print(f'    Linux               : xdg-open "{result.video_path}"')
+        print(SEP)
 
-    SEP = "=" * 70
-    print(f"\n{SEP}")
-    print(f"  RENDERING VIDEO ({args.size} [{res_tuple[0]}x{res_tuple[1]}] @ {args.fps} fps)")
-    print(SEP)
-
-    def progress_cb(cur: int, total: int, msg: str) -> None:
-        print(f"  Rendering scene {cur}/{total}...")
-
-    t0 = time.perf_counter()
-    import tempfile
-    from src.audio_builder import build_audio_tracks
-
-    try:
-        with tempfile.TemporaryDirectory() as audio_temp:
-            audio_clip, _ = build_audio_tracks(
-                plan=plan,
-                temp_dir=Path(audio_temp),
-                voice=args.voice,
-                base_rate=args.tts_rate,
-                music_path=args.music,
-                no_audio=args.no_audio,
-                no_music=args.no_music,
-                warnings=plan.warnings,
-            )
-
-            try:
-                exported_path = build_video(
-                    plan=plan,
-                    prop=result.property,
-                    out_path=out_path,
-                    size=res_tuple,
-                    fps=args.fps,
-                    progress_cb=progress_cb,
-                    audio=audio_clip,
-                )
-            finally:
-                if audio_clip is not None:
-                    try:
-                        audio_clip.close()
-                    except Exception:
-                        pass
-        render_time = time.perf_counter() - t0
-    except Exception as exc:
-        logger.exception("Video rendering error: %s", exc)
-        print(f"\n[ERROR] Video generation failed: {exc}")
-        print("Details have been written to logs/app.log")
-        return 1
-
-    file_size_bytes = exported_path.stat().st_size
-    file_size_mb = file_size_bytes / (1024 * 1024)
-
-    print(f"\n{SEP}")
-    print("  VIDEO GENERATION COMPLETE")
-    print(SEP)
-    print(f"  Output file : {exported_path}")
-    print(f"  Duration    : {plan.total_duration}s")
-    print(f"  Resolution  : {res_tuple[0]}x{res_tuple[1]} ({args.size})")
-    print(f"  File size   : {file_size_mb:.2f} MB ({file_size_bytes:,} bytes)")
-    print(f"  Render time : {render_time:.1f}s")
-    print("\n  To view the video:")
-    print(f'    Windows (PowerShell): Start-Process "{exported_path}"')
-    print(f'    macOS               : open "{exported_path}"')
-    print(f'    Linux               : xdg-open "{exported_path}"')
-    print(SEP)
+        if args.open:
+            open_video_in_player(result.video_path)
 
     return 0
 

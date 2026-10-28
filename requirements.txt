@@ -5,13 +5,16 @@ moviepy==2.2.1
 Pillow==11.3.0
 
 # Text-to-speech (no API key needed)
-edge-tts==7.0.2
+edge-tts==7.3.1
 
 # Environment variable management (also a moviepy dependency)
 python-dotenv==1.2.4
 
 # FFmpeg bundled — no system install required (moviepy 2.2.1 pulls >=0.2.0)
 imageio-ffmpeg==0.7.0
+
+# Web UI
+streamlit==1.66.1
 
 # Testing
 pytest==8.3.5
