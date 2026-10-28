@@ -2,7 +2,8 @@
   "source": "template",
   "total_duration": 26.5,
   "warnings": [
-    "LLM request returned rate limit reached (HTTP 429). Falling back to template plan.",
+    "LLM API primary failed after retry (rate limit reached (HTTP 429)).",
+    "All LLM providers failed. Falling back to template plan.",
     "Only 4 image(s) available for 6 scenes; images were reused."
   ],
   "scenes": [

@@ -46,11 +46,12 @@ Images (3 accepted):
   - valid_1.jpg
   - valid_2.jpg
 
-WARNINGS (5):
-  âš   'corrupt_photo.jpg' could not be read (possibly corrupt): cannot identify image file 'C:\\Users\\KARTIK~1\\AppData\\Local\\Temp\\tmpknas4c_8\\corrupt_photo.jpg'. Skipping this file.
+WARNINGS (6):
+  âš   'corrupt_photo.jpg' could not be read (possibly corrupt): cannot identify image file 'C:\\Users\\KARTIK~1\\AppData\\Local\\Temp\\tmp34jbe9f5\\corrupt_photo.jpg'. Skipping this file.
   âš   Only 3 image(s) found. Recommended: 4â€“8 images. The video will be shorter.
   âš   Custom script used for 6 scenes.
-  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   LLM API primary failed after retry (rate limit reached (HTTP 429)).
+  âš   All LLM providers failed. Falling back to template plan.
   âš   Only 3 image(s) available for 6 scenes; images were reused.
 
 ======================================================================
@@ -79,9 +80,10 @@ WARNINGS (5):
                                                            +91-00000-00000
                                                   VO     : "Book a site visit today. Contact details are on screen."
 
-PLAN WARNINGS (3):
+PLAN WARNINGS (4):
   âš   Custom script used for 6 scenes.
-  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   LLM API primary failed after retry (rate limit reached (HTTP 429)).
+  âš   All LLM providers failed. Falling back to template plan.
   âš   Only 3 image(s) available for 6 scenes; images were reused.
 ======================================================================
 
@@ -90,6 +92,9 @@ PLAN WARNINGS (3):
 âœ“ Skipping video rendering (--no-video flag set).
 
 [WARNING] LLM API rate limit exceeded (HTTP 429)
+[WARNING] LLM API primary returned rate limit reached (HTTP 429). Retrying once after 2.32s...
+[WARNING] LLM API rate limit exceeded (HTTP 429)
+[WARNING] LLM API primary failed after retry (rate limit reached (HTTP 429)).
 
 
 ======================================================================
@@ -145,9 +150,10 @@ Images (4 accepted):
   - 1_frontal.jpg
   - 1_kitchen.jpg
 
-WARNINGS (3):
+WARNINGS (4):
   âš   Custom script used for 6 scenes.
-  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   LLM API primary failed after retry (rate limit reached (HTTP 429)).
+  âš   All LLM providers failed. Falling back to template plan.
   âš   Only 4 image(s) available for 6 scenes; images were reused.
 
 ======================================================================
@@ -176,9 +182,10 @@ WARNINGS (3):
                                                            +91-00000-00000
                                                   VO     : "Book a site visit today. Contact details are on screen."
 
-PLAN WARNINGS (3):
+PLAN WARNINGS (4):
   âš   Custom script used for 6 scenes.
-  âš   LLM request returned rate limit reached (HTTP 429). Falling back to template plan.
+  âš   LLM API primary failed after retry (rate limit reached (HTTP 429)).
+  âš   All LLM providers failed. Falling back to template plan.
   âš   Only 4 image(s) available for 6 scenes; images were reused.
 ======================================================================
 
@@ -187,4 +194,7 @@ PLAN WARNINGS (3):
 âœ“ Skipping video rendering (--no-video flag set).
 
 [WARNING] LLM API rate limit exceeded (HTTP 429)
+[WARNING] LLM API primary returned rate limit reached (HTTP 429). Retrying once after 2.24s...
+[WARNING] LLM API rate limit exceeded (HTTP 429)
+[WARNING] LLM API primary failed after retry (rate limit reached (HTTP 429)).
 
