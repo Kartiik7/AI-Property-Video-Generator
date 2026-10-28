@@ -14,6 +14,8 @@ __pycache__/
 # Generated videos and scripts (keep the placeholder so the folder is tracked)
 output/*.mp4
 output/*.json
+output/.cache/
+.cache/
 
 # macOS metadata
 .DS_Store

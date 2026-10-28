@@ -73,7 +73,7 @@ def _mock_http_response(content_str: str):
 
 def test_no_key_falls_back_to_template(sample_prop, skeleton):
     images = [Path(f"img_{i}.jpg") for i in range(5)]
-    with patch.dict("os.environ", {"LLM_API_KEY": ""}):
+    with patch.dict("os.environ", {"LLM_API_KEY": "", "GEMINI_API_KEY": ""}):
         scenes, warnings = generate_scene_copy(sample_prop, skeleton)
         assert scenes is None
         assert any("LLM_API_KEY is not set" in w for w in warnings)
@@ -369,7 +369,7 @@ def test_gemini_api_key_automatically_used(sample_prop, skeleton):
         return _mock_http_response(valid_content)
 
     # When GEMINI_API_KEY is in env and LLM_API_KEY is not
-    with patch.dict("os.environ", {"GEMINI_API_KEY": "AIzaSyFakeGeminiKey", "LLM_API_KEY": ""}):
+    with patch.dict("os.environ", {"GEMINI_API_KEY": "AIzaSyFakeGeminiKey", "LLM_API_KEY": "", "LLM_MODEL": ""}):
         with patch("urllib.request.urlopen", side_effect=mock_open):
             scenes, warnings = generate_scene_copy(sample_prop, skeleton)
             assert scenes is not None

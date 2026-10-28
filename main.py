@@ -104,6 +104,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output video path (default: output/<property-name-slug>.mp4).",
     )
+    p.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="Disable all audio (both narration and background music).",
+    )
+    p.add_argument(
+        "--no-music",
+        action="store_true",
+        help="Disable background music (narration will still play).",
+    )
+    p.add_argument(
+        "--music",
+        metavar="PATH",
+        default=None,
+        help="Path to custom background music audio file.",
+    )
+    p.add_argument(
+        "--voice",
+        metavar="NAME",
+        default="en-IN-NeerjaNeural",
+        help="edge-tts voice name (default: en-IN-NeerjaNeural).",
+    )
+    p.add_argument(
+        "--tts-rate",
+        type=int,
+        default=0,
+        help="TTS speed percentage adjustment (e.g. 10 for +10%%, default: 0).",
+    )
     return p
 
 
@@ -265,15 +293,38 @@ def main() -> int:
         print(f"  Rendering scene {cur}/{total}...")
 
     t0 = time.perf_counter()
+    import tempfile
+    from src.audio_builder import build_audio_tracks
+
     try:
-        exported_path = build_video(
-            plan=plan,
-            prop=result.property,
-            out_path=out_path,
-            size=res_tuple,
-            fps=args.fps,
-            progress_cb=progress_cb,
-        )
+        with tempfile.TemporaryDirectory() as audio_temp:
+            audio_clip, _ = build_audio_tracks(
+                plan=plan,
+                temp_dir=Path(audio_temp),
+                voice=args.voice,
+                base_rate=args.tts_rate,
+                music_path=args.music,
+                no_audio=args.no_audio,
+                no_music=args.no_music,
+                warnings=plan.warnings,
+            )
+
+            try:
+                exported_path = build_video(
+                    plan=plan,
+                    prop=result.property,
+                    out_path=out_path,
+                    size=res_tuple,
+                    fps=args.fps,
+                    progress_cb=progress_cb,
+                    audio=audio_clip,
+                )
+            finally:
+                if audio_clip is not None:
+                    try:
+                        audio_clip.close()
+                    except Exception:
+                        pass
         render_time = time.perf_counter() - t0
     except Exception as exc:
         logger.exception("Video rendering error: %s", exc)
