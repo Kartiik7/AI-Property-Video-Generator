@@ -76,9 +76,15 @@ cp .env.example .env
 ```
 
 ```env
+# Primary LLM provider
 LLM_API_KEY=your_key_here
 LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
+
+# Optional Fallback provider (e.g. OpenRouter, Groq, local endpoint)
+LLM_FALLBACK_API_KEY=your_fallback_key
+LLM_FALLBACK_MODEL=openrouter/auto
+LLM_FALLBACK_BASE_URL=https://openrouter.ai/api/v1
 ```
 
 - **Automatic LLM Mode**: If `LLM_API_KEY` is set in `.env`, LLM mode is used automatically.
@@ -145,10 +151,11 @@ When LLM mode is active (default when `LLM_API_KEY` is present):
   - **Per-Scene Constraints**: Each scene is vetted individually: captions must stay within 2 lines of max 38 characters each, voiceovers must not exceed 18 words, and the phone number is never spoken.
   - **Fact Checking**: Every generated line is verified by `src/fact_checker.py`. No foreign numbers, unmentioned amenities (e.g. unlisted gym, swimming pool, clubhouse), or prohibited promotional claims (`luxury`, `premium`, `best in class`, `guaranteed`, `RERA approved`, `near metro`) are permitted.
   - **Single Targeted Retry**: If any scenes fail validation or fact checks, the system issues **one** focused retry call providing the LLM with the exact error details (e.g., `"scene 3 contains the number 500 which is not in the input"`), requesting corrections for only the failing scenes.
-- **Fallback Behavior**:
-  - **Per-Scene Fallback**: Only scenes that still fail after retry are replaced with deterministic template text; all valid LLM scenes are preserved.
-  - **Graceful Network & Format Recovery**: If the API call times out (20s limit), encounters HTTP errors or rate limits (`429`), or returns malformed JSON, the generator logs a clear warning and seamlessly falls back to template generation without crashing. The API key is never printed or logged.
-  - **Transparent Source Tracking**: The plan records its exact origin — `"llm"` (all scenes from AI), `"template"` (deterministic fallback), or `"mixed (N of M scenes from LLM)"` — and saves this in `output/script.json`.
+- **Fallback Behavior & Provider Resilience**:
+  - **Provider Hierarchy & Retry**: Requests follow the call order `primary provider -> fallback provider -> template`. On transient errors (HTTP 429, 500, 502, 503, 504, timeout, or network error), the provider is retried ONCE after a short backoff (2s + jitter) before switching to the fallback provider. On authentication errors (HTTP 401/403), it immediately logs a clear warning (`check LLM_API_KEY`) and advances to the fallback provider without retrying.
+  - **Per-Scene Fallback**: Whichever provider answers the initial request handles the targeted retry. Only scenes that still fail validation after retry are replaced with deterministic template text; all valid LLM scenes are preserved.
+  - **Graceful Format Recovery**: Strips markdown code fences (` ```json `), reasoning `<think>...</think>` tags, and extracts the first balanced `{...}` JSON block if wrapped in conversational text.
+  - **Transparent Source Tracking**: The plan records the exact answering provider — `"llm (primary)"`, `"llm (fallback: openrouter)"`, `"template"`, or `"mixed (N of M scenes from llm (primary))"` — in `plan.source` and in `output/script.json`. API keys are never recorded or logged.
 
 ### Duration Budgeting
 - Per-scene duration estimated from voiceover length: $\max(3.5, \text{words} / 2.5 + 0.8)$ seconds (title/CTA minimum 4.0s).

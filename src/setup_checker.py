@@ -40,9 +40,11 @@ def check_capabilities() -> dict[str, tuple[bool, str]]:
     # 3. LLM API Key configured (Never print the key!)
     has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
     has_llm = bool(os.getenv("LLM_API_KEY", "").strip())
-    if has_gemini or has_llm:
-        provider = "Gemini" if has_gemini else "OpenAI-compatible"
-        results["LLM API"] = (True, f"Key configured ({provider} AI script generation ready)")
+    has_fallback = bool(os.getenv("LLM_FALLBACK_API_KEY", "").strip())
+    if has_gemini or has_llm or has_fallback:
+        provider = "Gemini" if (has_gemini and not has_llm) else "OpenAI-compatible"
+        extra = " + fallback configured" if has_fallback and (has_gemini or has_llm) else (" (fallback only)" if has_fallback else "")
+        results["LLM API"] = (True, f"Key configured ({provider} AI script generation ready{extra})")
     else:
         results["LLM API"] = (False, "No key configured in .env (deterministic template mode active)")
 

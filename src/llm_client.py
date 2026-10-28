@@ -9,6 +9,10 @@ per-scene through fact_checker and layout rules with a single targeted retry.
 import os
 import json
 import re
+import time
+import random
+from dataclasses import dataclass
+from urllib.parse import urlparse
 import urllib.request
 import urllib.error
 from dotenv import load_dotenv
@@ -27,14 +31,89 @@ DEFAULT_MODEL = "gpt-4o-mini"
 REQUEST_TIMEOUT = 20  # seconds
 TEMPERATURE = 0.3
 
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+AUTH_ERROR_CODES = {401, 403}
+
+
+@dataclass
+class LLMProvider:
+    name: str                 # "primary" or "fallback: openrouter"
+    api_key: str
+    base_url: str
+    model: str
+    key_env_var: str          # "LLM_API_KEY" or "LLM_FALLBACK_API_KEY"
+    is_primary: bool
+
+
+def _get_provider_label(base_url: str, is_primary: bool) -> str:
+    """Derive human-friendly provider name for plan source tracking."""
+    if is_primary:
+        return "primary"
+    if not base_url:
+        return "fallback"
+    try:
+        netloc = urlparse(base_url).netloc.lower() or base_url.lower()
+        host = netloc.split(":")[0]
+        ignore = {"api", "www", "com", "ai", "io", "org", "co", "dev", "net", "app", "v1", "http", "https"}
+        parts = [p for p in host.split(".") if p not in ignore]
+        if parts:
+            return f"fallback: {parts[0]}"
+        return "fallback"
+    except Exception:
+        return "fallback"
+
+
+def _get_configured_providers() -> list[LLMProvider]:
+    """Return ordered list of configured providers: primary first, then fallback."""
+    providers: list[LLMProvider] = []
+
+    # Primary provider
+    primary_key = os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+    if primary_key:
+        is_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip()) and not os.getenv("LLM_API_KEY", "").strip()
+        default_base = "https://generativelanguage.googleapis.com/v1beta/openai" if is_gemini else DEFAULT_BASE_URL
+        default_model = "gemini-2.5-flash" if is_gemini else DEFAULT_MODEL
+        base_url = os.getenv("LLM_BASE_URL", default_base).strip().rstrip("/") or default_base
+        model = os.getenv("LLM_MODEL", default_model).strip() or default_model
+        key_var = "GEMINI_API_KEY" if is_gemini else "LLM_API_KEY"
+        providers.append(
+            LLMProvider(
+                name="primary",
+                api_key=primary_key,
+                base_url=base_url,
+                model=model,
+                key_env_var=key_var,
+                is_primary=True,
+            )
+        )
+
+    # Fallback provider
+    fallback_key = os.getenv("LLM_FALLBACK_API_KEY", "").strip()
+    if fallback_key:
+        fallback_base = os.getenv("LLM_FALLBACK_BASE_URL", DEFAULT_BASE_URL).strip().rstrip("/") or DEFAULT_BASE_URL
+        fallback_model = os.getenv("LLM_FALLBACK_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+        label = _get_provider_label(fallback_base, is_primary=False)
+        providers.append(
+            LLMProvider(
+                name=label,
+                api_key=fallback_key,
+                base_url=fallback_base,
+                model=fallback_model,
+                key_env_var="LLM_FALLBACK_API_KEY",
+                is_primary=False,
+            )
+        )
+
+    return providers
+
 
 def _safe_error_msg(exc: Exception) -> str:
     """Format exception message without leaking any potential API keys."""
     msg = str(exc)
     msg = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]+", "Bearer [REDACTED]", msg)
-    for env_var in ("LLM_API_KEY", "GEMINI_API_KEY"):
+    for env_var in ("LLM_API_KEY", "GEMINI_API_KEY", "LLM_FALLBACK_API_KEY"):
         key = os.getenv(env_var, "").strip()
-        if key and len(key) > 4:
+        if key and len(key) >= 4:
             msg = msg.replace(key, "[REDACTED]")
     return msg
 
@@ -106,18 +185,17 @@ def _validate_scene_copy(
     return len(problems) == 0, problems
 
 
-def _send_chat_completion(
+def _send_single_http_request(
     endpoint: str,
     api_key: str,
     messages: list[dict],
     model: str,
     temperature: float = TEMPERATURE,
-) -> tuple[dict | None, str | None]:
-    """Send HTTP request to OpenAI-compatible chat completions endpoint.
+) -> tuple[dict | None, int | None, str | None]:
+    """Execute a single HTTP request to an OpenAI-compatible endpoint.
 
     Returns:
-        (response_dict, None) on success
-        (None, error_description) on failure
+        (response_dict, status_code, error_message)
     """
     req_body = {
         "model": model,
@@ -139,28 +217,165 @@ def _send_chat_completion(
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             resp_bytes = response.read()
             resp_json = json.loads(resp_bytes.decode("utf-8"))
-            return resp_json, None
+            return resp_json, 200, None
     except urllib.error.HTTPError as exc:
         err_msg = _safe_error_msg(exc)
         if exc.code == 429:
             logger.warning("LLM API rate limit exceeded (HTTP 429)")
-            return None, "rate limit reached (HTTP 429)"
+            return None, 429, "rate limit reached (HTTP 429)"
         logger.warning("LLM API HTTP error %d: %s", exc.code, err_msg)
-        return None, f"HTTP error {exc.code} ({err_msg})"
+        return None, exc.code, f"HTTP error {exc.code} ({err_msg})"
     except (TimeoutError, urllib.error.URLError) as exc:
         if isinstance(exc, TimeoutError) or (isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, TimeoutError)):
             logger.warning("LLM API request timed out after %ds", REQUEST_TIMEOUT)
-            return None, f"request timed out after {REQUEST_TIMEOUT}s"
+            return None, None, f"request timed out after {REQUEST_TIMEOUT}s"
         err_msg = _safe_error_msg(exc)
         logger.warning("LLM API network error: %s", err_msg)
-        return None, f"network error ({err_msg})"
+        return None, None, f"network error ({err_msg})"
     except json.JSONDecodeError as exc:
         logger.warning("LLM API returned non-JSON HTTP body: %s", exc)
-        return None, f"malformed HTTP response JSON: {exc}"
+        return None, None, f"malformed HTTP response JSON: {exc}"
     except Exception as exc:
         err_msg = _safe_error_msg(exc)
         logger.warning("LLM API unexpected error: %s", err_msg)
-        return None, f"unexpected error ({err_msg})"
+        return None, None, f"unexpected error ({err_msg})"
+
+
+def _send_chat_completion(
+    endpoint: str,
+    api_key: str,
+    messages: list[dict],
+    model: str,
+    temperature: float = TEMPERATURE,
+) -> tuple[dict | None, str | None]:
+    """Single request helper returning (response_dict, error_msg)."""
+    resp_json, _, err_msg = _send_single_http_request(
+        endpoint, api_key, messages, model, temperature
+    )
+    return resp_json, err_msg
+
+
+def _call_provider_with_retry(
+    provider: LLMProvider,
+    messages: list[dict],
+    warnings: list[str],
+) -> tuple[dict | None, str | None]:
+    """Call a provider with at most ONE retry on 429, 500, 502, 503, 504, timeout, or network error.
+
+    Do not retry on 401/403 (bad key); move on and warn "check LLM_API_KEY".
+    """
+    endpoint = f"{provider.base_url}/chat/completions"
+
+    resp_json, status_code, err_msg = _send_single_http_request(
+        endpoint, provider.api_key, messages, provider.model, TEMPERATURE
+    )
+
+    if resp_json is not None:
+        return resp_json, None
+
+    # 401 / 403: Bad key. Do NOT retry! Move on and warn "check LLM_API_KEY" (or key_env_var)
+    if status_code in AUTH_ERROR_CODES:
+        auth_warning = f"LLM API authentication failed ({status_code}); check {provider.key_env_var}."
+        logger.warning(auth_warning)
+        warnings.append(auth_warning)
+        return None, auth_warning
+
+    # Check if retryable: 429, 500, 502, 503, 504, timeout, or network error
+    is_retryable = False
+    if status_code in RETRYABLE_STATUS_CODES:
+        is_retryable = True
+    elif status_code is None and err_msg and ("timed out" in err_msg or "network error" in err_msg):
+        is_retryable = True
+
+    if not is_retryable:
+        # Other non-retryable error
+        err_desc = f"LLM API returned {err_msg}."
+        logger.warning(err_desc)
+        warnings.append(err_desc)
+        return None, err_desc
+
+    # Retry the same provider ONCE after a short backoff (2 s, plus a small random jitter)
+    backoff = 2.0 + random.uniform(0.1, 0.5)
+    logger.warning("LLM API %s returned %s. Retrying once after %.2fs...", provider.name, err_msg, backoff)
+    time.sleep(backoff)
+
+    resp_json_retry, status_code_retry, err_msg_retry = _send_single_http_request(
+        endpoint, provider.api_key, messages, provider.model, TEMPERATURE
+    )
+
+    if resp_json_retry is not None:
+        logger.info("LLM API %s retry succeeded.", provider.name)
+        return resp_json_retry, None
+
+    retry_failure = f"LLM API {provider.name} failed after retry ({err_msg_retry or err_msg})."
+    logger.warning(retry_failure)
+    warnings.append(retry_failure)
+    return None, retry_failure
+
+
+def _clean_and_extract_json(content: str) -> tuple[dict | None, str | None]:
+    """Strip markdown code fences, leading thinking text, and extract first {...} block."""
+    if not content or not content.strip():
+        return None, "empty content"
+
+    text = content.strip()
+
+    # 1. Strip thinking tags: <think>...</think>, <thought>...</thought>
+    text = re.sub(r"(?is)<think(?:ing)?>.*?</think(?:ing)?>", "", text).strip()
+    text = re.sub(r"(?is)<thought>.*?</thought>", "", text).strip()
+
+    # 2. Extract content from markdown code fences if present
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if fence_match:
+        fenced_text = fence_match.group(1).strip()
+        try:
+            parsed = json.loads(fenced_text)
+            if isinstance(parsed, dict):
+                return parsed, None
+        except json.JSONDecodeError:
+            text = fenced_text
+
+    # 3. Direct JSON parse
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed, None
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Extract first balanced {...} block
+    start = text.find("{")
+    if start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if escape:
+                escape = False
+                continue
+            if ch == '\\':
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start : i + 1]
+                        try:
+                            parsed = json.loads(candidate)
+                            if isinstance(parsed, dict):
+                                return parsed, None
+                        except json.JSONDecodeError as exc:
+                            return None, f"extracted JSON object is invalid ({exc})"
+                        break
+
+    return None, "no valid JSON object found in response"
 
 
 def _extract_scenes_from_response(resp_json: dict) -> tuple[list[dict] | None, str | None, str]:
@@ -170,23 +385,18 @@ def _extract_scenes_from_response(resp_json: dict) -> tuple[list[dict] | None, s
         (scenes_list, error_msg, raw_content_str)
     """
     try:
-        content = resp_json["choices"][0]["message"]["content"].strip()
+        content = resp_json["choices"][0]["message"]["content"]
+        if content is None:
+            content = ""
+        content = str(content).strip()
     except (KeyError, IndexError, TypeError) as exc:
         return None, f"missing choices/message structure ({exc})", ""
 
-    # Strip code fences if model enclosed JSON in ```json ... ```
-    clean_content = content
-    if clean_content.startswith("```"):
-        clean_content = re.sub(r"^```(?:json)?\s*", "", clean_content)
-        clean_content = re.sub(r"\s*```$", "", clean_content)
-        clean_content = clean_content.strip()
+    parsed, parse_err = _clean_and_extract_json(content)
+    if parse_err or parsed is None:
+        return None, f"malformed JSON: {parse_err}", content
 
-    try:
-        parsed = json.loads(clean_content)
-    except json.JSONDecodeError as exc:
-        return None, f"malformed JSON: {exc}", content
-
-    if not isinstance(parsed, dict) or "scenes" not in parsed:
+    if "scenes" not in parsed:
         return None, "JSON missing top-level 'scenes' key", content
 
     raw_scenes = parsed["scenes"]
@@ -195,39 +405,30 @@ def _extract_scenes_from_response(resp_json: dict) -> tuple[list[dict] | None, s
 
     return raw_scenes, None, content
 
-
 def generate_scene_copy(
     prop: PropertyData,
     scene_skeleton: list[dict],
-) -> tuple[list[dict | None] | None, list[str]]:
-    """Generate scene copy using an OpenAI-compatible LLM endpoint with per-scene validation and retry.
+) -> tuple[list[dict | None] | None, list[str], str | None]:
+    """Generate scene copy using OpenAI-compatible LLM endpoint(s) with per-scene validation and retry.
 
+    Call order: primary provider -> fallback provider -> template.
     Returns:
-        (scenes_data | None, warnings)
+        (scenes_data | None, warnings, answering_provider_name | None)
         where scenes_data is a list of len(scene_skeleton) with:
           - dict for scenes that succeeded (initial or retry)
           - None for scenes that failed and must fall back to template text.
-        If the entire call failed (missing key, network/HTTP error, timeout, bad JSON),
-        scenes_data is None.
+        If all providers fail, scenes_data is None.
     """
     warnings: list[str] = []
 
-    # ── 1. Check API key ───────────────────────────────────────────────────
-    api_key = os.getenv("LLM_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
+    # ── 1. Check configured providers ──────────────────────────────────────
+    providers = _get_configured_providers()
+    if not providers:
         warnings.append(
             "LLM mode requested but LLM_API_KEY is not set. "
             "Falling back to template plan."
         )
-        return None, warnings
-
-    is_gemini_key = bool(os.getenv("GEMINI_API_KEY", "").strip()) and not os.getenv("LLM_API_KEY", "").strip()
-    default_base = "https://generativelanguage.googleapis.com/v1beta/openai" if is_gemini_key else DEFAULT_BASE_URL
-    default_model = "gemini-2.5-flash" if is_gemini_key else DEFAULT_MODEL
-
-    model = os.getenv("LLM_MODEL", default_model).strip() or default_model
-    base_url = os.getenv("LLM_BASE_URL", default_base).strip().rstrip("/") or default_base
-    endpoint = f"{base_url}/chat/completions"
+        return None, warnings, None
 
     # ── 2. Build prompts sending ONLY property facts + scene skeleton ───────
     expected_count = len(scene_skeleton)
@@ -278,23 +479,38 @@ def generate_scene_copy(
         {"role": "user", "content": user_prompt},
     ]
 
-    # ── 3. Initial LLM Call ────────────────────────────────────────────────
-    resp_json, err = _send_chat_completion(endpoint, api_key, messages, model, temperature=TEMPERATURE)
-    if err:
-        warnings.append(f"LLM request returned {err}. Falling back to template plan.")
-        return None, warnings
+    # ── 3. Call order: primary provider -> fallback provider -> template ──
+    answering_provider: LLMProvider | None = None
+    raw_scenes: list[dict] | None = None
+    raw_content: str = ""
 
-    raw_scenes, parse_err, raw_content = _extract_scenes_from_response(resp_json)
-    if parse_err or raw_scenes is None:
-        warnings.append(f"LLM returned invalid response: {parse_err}. Falling back to template plan.")
-        return None, warnings
+    for provider in providers:
+        resp_json, call_err = _call_provider_with_retry(provider, messages, warnings)
+        if not resp_json:
+            continue
 
-    if len(raw_scenes) != expected_count:
-        warnings.append(
-            f"LLM returned {len(raw_scenes)} scenes; expected {expected_count}. "
-            "Falling back to template plan."
-        )
-        return None, warnings
+        scenes_list, parse_err, content_str = _extract_scenes_from_response(resp_json)
+        if parse_err or scenes_list is None:
+            msg = f"LLM {provider.name} provider returned invalid response: {parse_err}."
+            logger.warning(msg)
+            warnings.append(msg)
+            continue
+
+        if len(scenes_list) != expected_count:
+            msg = f"LLM {provider.name} provider returned {len(scenes_list)} scenes; expected {expected_count}."
+            logger.warning(msg)
+            warnings.append(msg)
+            continue
+
+        # Provider answered successfully!
+        answering_provider = provider
+        raw_scenes = scenes_list
+        raw_content = content_str
+        break
+
+    if answering_provider is None or raw_scenes is None:
+        warnings.append("All LLM providers failed. Falling back to template plan.")
+        return None, warnings, None
 
     # ── 4. Per-Scene Validation ────────────────────────────────────────────
     allowed_facts = extract_allowed_facts(prop)
@@ -319,7 +535,7 @@ def generate_scene_copy(
         else:
             failed_scenes.append((i, item, problems))
 
-    # ── 5. Retry Once If Some Scenes Failed ────────────────────────────────
+    # ── 5. Retry Once If Some Scenes Failed (Using answering provider) ─────
     if failed_scenes:
         problem_bullets = []
         for idx, _, probs in failed_scenes:
@@ -346,9 +562,14 @@ def generate_scene_copy(
             {"role": "user", "content": retry_user_prompt},
         ]
 
-        logger.info("Retrying %d failed LLM scene(s)...", len(failed_scenes))
+        logger.info("Retrying %d failed LLM scene(s) using %s...", len(failed_scenes), answering_provider.name)
+        retry_endpoint = f"{answering_provider.base_url}/chat/completions"
         retry_resp, retry_err = _send_chat_completion(
-            endpoint, api_key, retry_messages, model, temperature=TEMPERATURE
+            retry_endpoint,
+            answering_provider.api_key,
+            retry_messages,
+            answering_provider.model,
+            temperature=TEMPERATURE,
         )
 
         if retry_err:
@@ -418,6 +639,7 @@ def generate_scene_copy(
 
     # ── 6. If all scenes failed, return None so entire plan falls back ────
     if all(r is None for r in results):
-        return None, warnings
+        return None, warnings, None
 
-    return results, warnings
+    return results, warnings, answering_provider.name
+

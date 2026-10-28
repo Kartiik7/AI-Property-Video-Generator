@@ -530,6 +530,7 @@ def build_scene_plan(
 
     # ── 3. Optional LLM mode ──────────────────────────────────────────────
     llm_scenes_used = 0
+    provider_label: str | None = None
     if use_llm:
         from src.llm_client import generate_scene_copy
         scene_skeleton = []
@@ -539,7 +540,12 @@ def build_scene_plan(
                 sk["feature"] = s["caption"]
             scene_skeleton.append(sk)
 
-        llm_scenes, llm_warnings = generate_scene_copy(prop, scene_skeleton)
+        llm_out = generate_scene_copy(prop, scene_skeleton)
+        if len(llm_out) == 3:
+            llm_scenes, llm_warnings, provider_label = llm_out
+        else:
+            llm_scenes, llm_warnings = llm_out
+            provider_label = "primary"
         warnings.extend(llm_warnings)
 
         if llm_scenes is not None:
@@ -553,12 +559,13 @@ def build_scene_plan(
                     llm_scenes_used += 1
 
     total_scenes = len(scenes_data)
+    prov_str = provider_label if provider_label else "primary"
     if llm_scenes_used == total_scenes:
-        source = "llm"
+        source = f"llm ({prov_str})"
     elif llm_scenes_used == 0:
         source = "template"
     else:
-        source = f"mixed ({llm_scenes_used} of {total_scenes} scenes from LLM)"
+        source = f"mixed ({llm_scenes_used} of {total_scenes} scenes from llm ({prov_str}))"
 
     # ── 4. Calculate durations ────────────────────────────────────────────
     durations = calculate_durations(scenes_data)

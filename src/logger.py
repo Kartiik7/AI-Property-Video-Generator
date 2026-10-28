@@ -43,11 +43,12 @@ class SecretScrubberFilter(logging.Filter):
         known_keys = [
             os.getenv("GEMINI_API_KEY", "").strip(),
             os.getenv("LLM_API_KEY", "").strip(),
+            os.getenv("LLM_FALLBACK_API_KEY", "").strip(),
         ]
 
         def _clean_str(val: str) -> str:
             for k in known_keys:
-                if k and len(k) >= 8:
+                if k and len(k) >= 4:
                     val = val.replace(k, "[REDACTED_API_KEY]")
             for pat in self.SECRET_PATTERNS:
                 val = pat.sub("[REDACTED_API_KEY]", val)
