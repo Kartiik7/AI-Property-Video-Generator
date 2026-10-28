@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment secrets — never commit real keys
+.env
+
+# Generated videos (keep the placeholder so the folder is tracked)
+output/*.mp4
+
+# macOS metadata
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# NOTE: input/ sample files are intentionally NOT ignored.
+#       Place property images in input/images/ for testing.

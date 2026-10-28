@@ -1,0 +1,17 @@
+# Core video generation
+moviepy==2.1.1
+
+# Image processing
+Pillow==11.1.0
+
+# Text-to-speech (no API key needed)
+edge-tts==7.0.2
+
+# Environment variable management
+python-dotenv==1.1.0
+
+# FFmpeg bundled — no system install required
+imageio-ffmpeg==0.6.0
+
+# Testing
+pytest==8.3.5
