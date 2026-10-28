@@ -247,3 +247,17 @@ def test_interactive_no_images_gives_error(tmp_path):
 
     assert not result.ok
     assert any("image" in e.lower() or "no usable" in e.lower() for e in result.errors)
+
+
+def test_main_interactive_ctrl_c_exits_130_without_summary(tmp_path, capsys):
+    """When user cancels interactive mode with Ctrl+C, main() returns 130 without summary."""
+    import main as main_module
+
+    with patch("sys.argv", ["main.py", "--interactive", "--images", str(tmp_path)]):
+        with patch("builtins.input", side_effect=KeyboardInterrupt):
+            exit_code = main_module.main()
+
+    assert exit_code == 130
+    captured = capsys.readouterr().out
+    assert "Input cancelled (Ctrl+C)" in captured
+    assert "PROPERTY VIDEO GENERATOR — INPUT SUMMARY" not in captured

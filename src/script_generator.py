@@ -1,0 +1,351 @@
+"""
+script_generator.py — Template-based (and optional LLM) storyboard and script generation.
+
+Generates ScenePlan:
+  - Title scene (property name + type + tagline)
+  - Feature scenes (up to 4 scenes, merging remaining features)
+  - Price & Location scene
+  - CTA scene (cta_text + contact)
+
+Enforces:
+  - Strict facts-only rule (verified via fact_checker)
+  - Caption: max 2 lines, max 38 chars/line, wrapped at word boundaries
+  - Voiceover: max 18 words, short natural sentences
+  - Scene duration >= 3.0s (title/CTA min 4.0s), total between 20s and 40s
+  - Deterministic variant selection (same input -> same output)
+"""
+
+import re
+import hashlib
+import textwrap
+from pathlib import Path
+from typing import TypeVar
+
+from src.models import PropertyData, Scene, ScenePlan
+from src.fact_checker import extract_allowed_facts, check_text
+
+T = TypeVar("T")
+
+
+# ── Spoken price formatter ──────────────────────────────────────────────────
+
+def format_spoken_price(price_str: str) -> str:
+    """Convert formatted rupee string to natural spoken English.
+
+    Examples:
+        "₹45,00,000"   -> "45 lakh rupees"
+        "₹1,20,00,000" -> "1 crore 20 lakh rupees"
+        "4500000"      -> "45 lakh rupees"
+        "On request"   -> "On request"
+    """
+    if not price_str or not isinstance(price_str, str):
+        return str(price_str)
+
+    # Strip symbols and delimiters to check if purely numeric
+    cleaned = re.sub(r"^(?:₹|[Rr][Ss]\.?\s*)", "", price_str.strip())
+    digits_only = cleaned.replace(",", "").replace(" ", "")
+
+    if not digits_only.isdigit() or not digits_only:
+        # Non-numeric text like "On request", "Call for price"
+        return price_str.strip()
+
+    num = int(digits_only)
+    if num <= 0:
+        return price_str.strip()
+
+    parts: list[str] = []
+    crores = num // 10_000_000
+    remainder = num % 10_000_000
+
+    lakhs = remainder // 100_000
+    remainder = remainder % 100_000
+
+    thousands = remainder // 1_000
+    remainder = remainder % 1_000
+
+    if crores > 0:
+        parts.append(f"{crores} crore")
+    if lakhs > 0:
+        parts.append(f"{lakhs} lakh")
+    if thousands > 0:
+        parts.append(f"{thousands} thousand")
+    if remainder > 0 and not parts:
+        parts.append(str(remainder))
+
+    if not parts:
+        return f"{num} rupees"
+
+    return " ".join(parts) + " rupees"
+
+
+# ── Text formatting helpers ────────────────────────────────────────────────
+
+def wrap_caption(text: str, max_lines: int = 2, max_line_len: int = 38) -> str:
+    """Wrap caption to at most *max_lines* of *max_line_len* characters.
+    
+    Splits at word boundaries and never cuts mid-word.
+    """
+    lines: list[str] = []
+    # If the text already has newlines, process each line individually
+    for segment in text.split("\n"):
+        wrapped = textwrap.wrap(segment.strip(), width=max_line_len)
+        if wrapped:
+            lines.extend(wrapped)
+        else:
+            lines.append("")
+
+    # Enforce max lines
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+
+    return "\n".join(lines).strip()
+
+
+def limit_words(text: str, max_words: int = 18) -> str:
+    """Ensure voiceover has at most *max_words*, preserving sentence ending."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text.strip()
+    truncated = " ".join(words[:max_words]).rstrip(",;")
+    if not truncated.endswith((".", "!", "?")):
+        truncated += "."
+    return truncated
+
+
+def _pick_variant(variants: list[T], seed_key: str, salt: str = "") -> T:
+    """Deterministically pick a variant using MD5 hash."""
+    h = hashlib.md5((seed_key + salt).encode("utf-8")).hexdigest()
+    idx = int(h, 16) % len(variants)
+    return variants[idx]
+
+
+# ── Feature grouping ───────────────────────────────────────────────────────
+
+def group_features(features: list[str], max_scenes: int = 4) -> list[str]:
+    """Group features into at most *max_scenes*.
+
+    If there are more than *max_scenes*, merge the extras into the final scene.
+    Example: 5 features -> 3 single features + 1 merged pair ("Feat 4 & Feat 5").
+    """
+    clean = [f.strip() for f in features if f.strip()]
+    if not clean:
+        return ["Key Amenities"]
+
+    if len(clean) <= max_scenes:
+        return clean
+
+    # First (max_scenes - 1) features stay individual
+    grouped = clean[: max_scenes - 1]
+    # Merge all remaining features into the last item
+    remaining = clean[max_scenes - 1 :]
+    merged = " & ".join(remaining)
+    grouped.append(merged)
+    return grouped
+
+
+# ── Duration calculation ───────────────────────────────────────────────────
+
+def calculate_durations(scenes_data: list[dict]) -> list[float]:
+    """Estimate and balance durations so total is between 20.0s and 40.0s.
+
+    Rules:
+      - Raw estimate = max(3.5, words / 2.5 + 0.8)
+      - Title and CTA minimum 4.0s
+      - Scene minimum >= 3.0s
+      - If total < 20s, expand scenes evenly
+      - If total > 40s, trim pause times evenly down to 3.0s minimum
+    """
+    n = len(scenes_data)
+    durations: list[float] = []
+
+    for item in scenes_data:
+        stype = item["scene_type"]
+        vo = item["voiceover"]
+        words = len(vo.split())
+        est = max(3.5, (words / 2.5) + 0.8)
+        if stype in ("title", "cta"):
+            est = max(4.0, est)
+        durations.append(est)
+
+    total = sum(durations)
+
+    if total < 20.0 and n > 0:
+        add_per_scene = (20.0 - total) / n
+        durations = [d + add_per_scene for d in durations]
+    elif total > 40.0 and n > 0:
+        excess = total - 40.0
+        trim_per_scene = excess / n
+        new_durations = []
+        for d in durations:
+            new_durations.append(max(3.0, d - trim_per_scene))
+        durations = new_durations
+
+    return [round(d, 1) for d in durations]
+
+
+# ── Template Scene Builders ────────────────────────────────────────────────
+
+def _build_title_scene(prop: PropertyData) -> dict:
+    caption_text = f"{prop.name}\n{prop.property_type}"
+    if prop.tagline and len(prop.tagline) <= 38:
+        caption_text = f"{prop.name}\n{prop.tagline}"
+
+    tagline_part = f" {prop.tagline}." if prop.tagline else ""
+    vo_variants = [
+        f"Welcome to {prop.name}, a {prop.property_type}.{tagline_part}",
+        f"Presenting {prop.name}, offering a {prop.property_type}.{tagline_part}",
+        f"Discover {prop.name}, a {prop.property_type}.{tagline_part}",
+    ]
+    vo = _pick_variant(vo_variants, prop.name, "title")
+
+    return {
+        "scene_type": "title",
+        "caption": wrap_caption(caption_text),
+        "voiceover": limit_words(vo),
+    }
+
+
+def _build_feature_scene(prop: PropertyData, feat: str, idx: int) -> dict:
+    vo_variants = [
+        f"Featuring {feat}.",
+        f"Includes {feat}.",
+        f"Equipped with {feat}.",
+    ]
+    vo = _pick_variant(vo_variants, prop.name, f"feat_{idx}")
+
+    return {
+        "scene_type": "feature",
+        "caption": wrap_caption(feat),
+        "voiceover": limit_words(vo),
+    }
+
+
+def _build_price_location_scene(prop: PropertyData) -> dict:
+    caption_text = f"{prop.price}\n{prop.location}"
+    spoken_price = format_spoken_price(prop.price)
+
+    vo_variants = [
+        f"Priced at {spoken_price}, located at {prop.location}.",
+        f"Located at {prop.location}, priced at {spoken_price}.",
+        f"Available at {spoken_price} in {prop.location}.",
+    ]
+    vo = _pick_variant(vo_variants, prop.name, "price_loc")
+
+    return {
+        "scene_type": "price_location",
+        "caption": wrap_caption(caption_text),
+        "voiceover": limit_words(vo),
+    }
+
+
+def _build_cta_scene(prop: PropertyData) -> dict:
+    if prop.contact:
+        caption_text = f"{prop.cta_text}\n{prop.contact}"
+        vo_variants = [
+            f"{prop.cta_text}. Contact {prop.contact}.",
+            f"{prop.cta_text} today at {prop.contact}.",
+            f"Get in touch at {prop.contact}. {prop.cta_text}.",
+        ]
+    else:
+        caption_text = prop.cta_text
+        vo_variants = [
+            f"{prop.cta_text}.",
+            f"{prop.cta_text} today.",
+            f"Reach out now. {prop.cta_text}.",
+        ]
+    vo = _pick_variant(vo_variants, prop.name, "cta")
+
+    return {
+        "scene_type": "cta",
+        "caption": wrap_caption(caption_text),
+        "voiceover": limit_words(vo),
+    }
+
+
+# ── Main Entry Point ───────────────────────────────────────────────────────
+
+def build_scene_plan(
+    prop: PropertyData,
+    images: list[Path],
+    use_llm: bool = False,
+) -> ScenePlan:
+    """Build a complete ScenePlan from validated PropertyData and image paths.
+
+    If use_llm is True, attempts to enhance captions/voiceovers via OpenAI-compatible
+    endpoint. If LLM fails or is disabled, falls back to deterministic template mode.
+    """
+    warnings: list[str] = []
+
+    # ── 1. Create skeleton scenes ─────────────────────────────────────────
+    scenes_data: list[dict] = []
+
+    # Title scene
+    scenes_data.append(_build_title_scene(prop))
+
+    # Feature scenes (grouped to max 4)
+    grouped_feats = group_features(prop.features, max_scenes=4)
+    for idx, feat in enumerate(grouped_feats):
+        scenes_data.append(_build_feature_scene(prop, feat, idx))
+
+    # Price & Location scene
+    scenes_data.append(_build_price_location_scene(prop))
+
+    # CTA scene
+    scenes_data.append(_build_cta_scene(prop))
+
+    source = "template"
+
+    # ── 2. Optional LLM mode ──────────────────────────────────────────────
+    if use_llm:
+        from src.llm_client import generate_scene_copy
+        llm_scenes, llm_warnings = generate_scene_copy(prop, scenes_data)
+        warnings.extend(llm_warnings)
+        if llm_scenes is not None:
+            scenes_data = llm_scenes
+            source = "llm"
+
+    # ── 3. Calculate durations ────────────────────────────────────────────
+    durations = calculate_durations(scenes_data)
+
+    # ── 4. Assign images ──────────────────────────────────────────────────
+    total_scenes = len(scenes_data)
+    num_images = len(images)
+
+    if num_images == 0:
+        warnings.append("No images provided; placeholder paths used.")
+        assigned_images = [Path(f"image_{i+1}.jpg") for i in range(total_scenes)]
+    elif num_images < total_scenes:
+        warnings.append(
+            f"Only {num_images} image(s) available for {total_scenes} scenes; "
+            "images were reused."
+        )
+        assigned_images = [images[i % num_images] for i in range(total_scenes)]
+    else:
+        assigned_images = images[:total_scenes]
+
+    # ── 5. Assemble Scene objects ─────────────────────────────────────────
+    final_scenes: list[Scene] = []
+    allowed_facts = extract_allowed_facts(prop)
+
+    for i, data in enumerate(scenes_data):
+        cap = wrap_caption(data["caption"])
+        vo = limit_words(data["voiceover"])
+        dur = max(3.0, durations[i])
+
+        # Self-check facts on generated copy
+        ok_c, prob_c = check_text(cap, allowed_facts)
+        ok_v, prob_v = check_text(vo, allowed_facts)
+        for p in prob_c + prob_v:
+            warnings.append(f"Fact check notice (Scene {i+1}): {p}")
+
+        final_scenes.append(
+            Scene(
+                scene_type=data["scene_type"],
+                image_path=assigned_images[i],
+                caption=cap,
+                voiceover=vo,
+                duration=dur,
+            )
+        )
+
+    return ScenePlan(scenes=final_scenes, source=source, warnings=warnings)

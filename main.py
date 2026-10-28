@@ -33,13 +33,14 @@ def build_parser() -> argparse.ArgumentParser:
         prog="property-video",
         description=(
             "AI Property Video Generator — "
-            "validates property data and images (Phase 1)."
+            "generates scripts, captions, and storyboards from property data."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python main.py --data input/property.json\n"
-            "  python main.py --data input/property.json --images input/images\n"
+            "  python main.py --data input/property.json --use-llm\n"
+            "  python main.py --data input/property.json --script-out output/my_script.json\n"
             "  python main.py --interactive\n"
         ),
     )
@@ -64,11 +65,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing property images (default: input/images).",
     )
     p.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Enable optional LLM mode for generating captions and voiceover.",
+    )
+    p.add_argument(
+        "--script-out",
+        metavar="PATH",
+        default=str(BASE_DIR / "output" / "script.json"),
+        help="Path to write generated scene plan JSON (default: output/script.json).",
+    )
+    p.add_argument(
         "--out",
         metavar="PATH",
         default=str(BASE_DIR / "output" / "property_video.mp4"),
         help="Output video path (default: output/property_video.mp4). "
-             "Unused in Phase 1.",
+             "Unused in Phase 2.",
     )
     return p
 
@@ -120,8 +132,40 @@ def print_summary(result) -> None:
         for e in result.errors:
             print(f"  ✗  {e}")
 
-    # Phase stub
-    print("\nVideo generation: not implemented yet (Phase 3)")
+
+def print_scene_plan(plan) -> None:
+    """Print the generated storyboard and script in a clean table format."""
+    SEP = "=" * 70
+    LINE = "-" * 70
+
+    print(f"\n{SEP}")
+    print(f"  SCENE PLAN (Source: {plan.source} | Total duration: {plan.total_duration}s)")
+    print(SEP)
+
+    header = f"{'#':<3} {'Type':<16} {'Image':<18} {'Duration':<10} {'Caption / Voiceover'}"
+    print(header)
+    print(LINE)
+
+    for i, s in enumerate(plan.scenes, 1):
+        # Format caption (could be 2 lines)
+        cap_lines = s.caption.split("\n")
+        first_cap = cap_lines[0] if cap_lines else ""
+        dur_str = f"{s.duration:.1f}s"
+        img_name = s.image_path.name
+
+        print(f"{i:<3} {s.scene_type:<16} {img_name:<18} {dur_str:<10} Caption: {first_cap}")
+        for extra_line in cap_lines[1:]:
+            print(f"{'':<49}          {extra_line}")
+        print(f"{'':<49} VO     : \"{s.voiceover}\"")
+        if i < len(plan.scenes):
+            print()
+
+    if plan.warnings:
+        print(f"\nPLAN WARNINGS ({len(plan.warnings)}):")
+        for w in plan.warnings:
+            print(f"  ⚠  {w}")
+
+    print(f"\nVideo generation: not implemented yet (Phase 3)")
     print(SEP)
 
 
@@ -134,22 +178,44 @@ def main() -> int:
     images_dir = Path(args.images)
 
     from src.input_loader import load_from_json, load_interactive
+    from src.script_generator import build_scene_plan
+    import json
 
     if args.interactive:
         result = load_interactive(images_dir)
+        # Ctrl+C in interactive mode exits immediately without summary block
+        if any("cancelled by user" in e.lower() or "ctrl+c" in e.lower() for e in result.errors):
+            return 130
     else:
         result = load_from_json(Path(args.data), images_dir)
 
     print_summary(result)
 
-    if result.ok:
-        logger.info("Input validation passed — %d image(s) ready.", len(result.images))
-        return 0
-    else:
+    if not result.ok:
+        print("\nVideo generation: not implemented yet (Phase 3)")
+        print("=" * 60)
         logger.warning(
             "Input validation failed with %d error(s).", len(result.errors)
         )
         return 1
+
+    logger.info("Input validation passed — building scene plan.")
+    plan = build_scene_plan(result.property, result.images, use_llm=args.use_llm)
+    print_scene_plan(plan)
+
+    # Save script JSON
+    script_out = Path(args.script_out)
+    try:
+        script_out.parent.mkdir(parents=True, exist_ok=True)
+        script_out.write_text(
+            json.dumps(plan.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(f"\n✓ Scene plan saved to: {script_out}")
+    except Exception as exc:
+        print(f"\n⚠ Could not save scene plan to '{script_out}': {exc}")
+
+    return 0
 
 
 if __name__ == "__main__":
