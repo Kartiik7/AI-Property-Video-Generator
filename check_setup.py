@@ -6,7 +6,12 @@ Run with:  python check_setup.py
 """
 
 import sys
+import io
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 from pathlib import Path
+
+# Force UTF-8 output so the checkmark prints correctly on Windows
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -48,31 +53,38 @@ print("Checking required packages …")
 
 MISSING_HINT = "Run:  pip install -r requirements.txt"
 
+def _pkg_ver(dist_name: str) -> str:
+    """Return installed version string for a distribution."""
+    try:
+        return pkg_version(dist_name)
+    except PackageNotFoundError:
+        return "(version unknown)"
+
 # moviepy
 try:
-    import moviepy
-    ok(f"moviepy         {moviepy.__version__}")
+    import moviepy  # noqa: F401
+    ok(f"moviepy         {_pkg_ver('moviepy')}")
 except ImportError:
     fail(f"moviepy         MISSING — {MISSING_HINT}")
 
 # Pillow / PIL
 try:
-    import PIL
-    ok(f"Pillow          {PIL.__version__}")
+    import PIL  # noqa: F401
+    ok(f"Pillow          {_pkg_ver('Pillow')}")
 except ImportError:
     fail(f"Pillow          MISSING — {MISSING_HINT}")
 
 # edge_tts
 try:
-    import edge_tts
-    ok(f"edge-tts        {edge_tts.__version__}")
+    import edge_tts  # noqa: F401
+    ok(f"edge-tts        {_pkg_ver('edge-tts')}")
 except ImportError:
     fail(f"edge-tts        MISSING — {MISSING_HINT}")
 
 # python-dotenv
 try:
-    import dotenv
-    ok(f"python-dotenv   {dotenv.__version__}")
+    import dotenv  # noqa: F401
+    ok(f"python-dotenv   {_pkg_ver('python-dotenv')}")
 except ImportError:
     fail(f"python-dotenv   MISSING — {MISSING_HINT}")
 
@@ -108,17 +120,34 @@ try:
     # Solid blue background, 2 seconds, 24 fps, 640×360
     bg = ColorClip(size=(640, 360), color=(30, 100, 200), duration=2)
 
-    # "Setup OK" text centred on the frame
-    txt = (
-        TextClip(
-            text="Setup OK",
-            font_size=60,
-            color="white",
-            font="Arial",
-            duration=2,
-        )
-        .with_position("center")
+    # Resolve a font path that Pillow can actually open.
+    # Try common system TTF locations (Windows / macOS / Linux), then fall
+    # back to the font file that ships with matplotlib (if installed), and
+    # finally to Pillow's built-in bitmap font via a tiny PNG workaround.
+    _FONT_CANDIDATES = [
+        Path("C:/Windows/Fonts/arial.ttf"),          # Windows
+        Path("C:/Windows/Fonts/calibri.ttf"),         # Windows fallback
+        Path("/System/Library/Fonts/Helvetica.ttc"),  # macOS
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),  # Linux
+        Path("/usr/share/fonts/TTF/DejaVuSans.ttf"),  # Arch Linux
+    ]
+    _font_path: str | None = None
+    for _c in _FONT_CANDIDATES:
+        if _c.exists():
+            _font_path = str(_c)
+            break
+
+    # Build the TextClip — font= accepts an absolute path on all platforms
+    _txt_kwargs: dict = dict(
+        text="Setup OK",
+        font_size=60,
+        color="white",
+        duration=2,
     )
+    if _font_path:
+        _txt_kwargs["font"] = _font_path
+
+    txt = TextClip(**_txt_kwargs).with_position("center")
 
     composite = CompositeVideoClip([bg, txt])
     composite.write_videofile(
@@ -144,7 +173,7 @@ except Exception as exc:
 
 print(SEP)
 if not failures:
-    print("ALL CHECKS PASSED ✓")
+    print("ALL CHECKS PASSED \u2713")
 else:
     print(f"CHECKS FAILED ({len(failures)} issue(s)):")
     for i, f_msg in enumerate(failures, 1):
