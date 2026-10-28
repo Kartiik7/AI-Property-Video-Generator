@@ -22,6 +22,8 @@ from src.script_generator import (
     format_spoken_price,
     wrap_caption,
     group_features,
+    format_property_type,
+    format_feature_for_voiceover,
 )
 
 
@@ -351,4 +353,108 @@ def test_sample_files_load_and_generate_without_errors():
     assert plan2.scenes[1].image_path.name == "2_kitchen.jpg"
     assert plan2.scenes[2].image_path.name == "2_bedroom.jpg"
     assert plan2.scenes[3].image_path.name == "2_bathroom.jpg"
+
+
+# ── Template Wording Fix Tests ─────────────────────────────────────────────
+
+def test_property_type_articles_and_casing():
+    # Helper checks
+    assert format_property_type("Apartment") == "an apartment"
+    assert format_property_type("Independent House") == "an independent house"
+    assert format_property_type("Villa") == "a villa"
+    assert format_property_type("Penthouse") == "a penthouse"
+
+    # Plan with Apartment
+    prop_apt = _make_prop(num_features=3)
+    prop_apt.property_type = "Apartment"
+    plan_apt = build_scene_plan(prop_apt, [Path(f"img_{i}.jpg") for i in range(5)])
+    assert "an apartment" in plan_apt.scenes[0].voiceover
+    assert "a Apartment" not in plan_apt.scenes[0].voiceover
+    assert "a apartment" not in plan_apt.scenes[0].voiceover
+
+    # Plan with Independent House
+    prop_house = _make_prop(num_features=3)
+    prop_house.property_type = "Independent House"
+    plan_house = build_scene_plan(prop_house, [Path(f"img_{i}.jpg") for i in range(5)])
+    assert "an independent house" in plan_house.scenes[0].voiceover
+    assert "a Independent House" not in plan_house.scenes[0].voiceover
+    assert "a independent house" not in plan_house.scenes[0].voiceover
+
+
+def test_feature_voiceover_formatting_and_casing():
+    # Helper checks
+    assert format_feature_for_voiceover("Spacious kitchen") == "spacious kitchen"
+    assert format_feature_for_voiceover("24/7 Security") == "24/7 Security"
+    assert format_feature_for_voiceover("CCTV cover") == "CCTV cover"
+    assert format_feature_for_voiceover("Modular Kitchen") == "modular Kitchen"
+
+    prop = _make_prop(num_features=3)
+    prop.features = ["24/7 Security", "Spacious Kitchen", "CCTV Surveillance"]
+    plan = build_scene_plan(prop, [Path(f"img_{i}.jpg") for i in range(6)])
+
+    feature_scenes = [s for s in plan.scenes if s.scene_type == "feature"]
+    assert len(feature_scenes) == 3
+
+    # Check prefix patterns and casing
+    valid_prefixes = ("Highlights include ", "Next up: ", "Also featured: ")
+    for s in feature_scenes:
+        assert any(s.voiceover.startswith(prefix) for prefix in valid_prefixes)
+
+    # 24/7 Security must NOT be lowercased
+    assert "24/7 Security" in feature_scenes[0].voiceover
+    # Spacious Kitchen has first letter lowercased
+    assert "spacious Kitchen" in feature_scenes[1].voiceover
+    # CCTV Surveillance must NOT lowercase CCTV
+    assert "CCTV Surveillance" in feature_scenes[2].voiceover
+
+
+def test_cta_voiceover_no_phone_no_double_today():
+    # Input with "Book a site visit today" and contact phone
+    prop = _make_prop(num_features=3)
+    prop.cta_text = "Book a site visit today"
+    prop.contact = "+91-00000-00000"
+    plan = build_scene_plan(prop, [Path(f"img_{i}.jpg") for i in range(5)])
+
+    cta_scene = [s for s in plan.scenes if s.scene_type == "cta"][0]
+    # Never speak the phone number
+    assert "+91-00000-00000" not in cta_scene.voiceover
+    assert "00000" not in cta_scene.voiceover
+    # No duplicate "today"
+    assert "today today" not in cta_scene.voiceover
+    # Correct format
+    assert cta_scene.voiceover == "Book a site visit today. Contact details are on screen."
+
+    # Input with trailing punctuation
+    prop2 = _make_prop(num_features=3)
+    prop2.cta_text = "Call now for an inquiry!"
+    prop2.contact = "+91-11111-22222"
+    plan2 = build_scene_plan(prop2, [Path(f"img_{i}.jpg") for i in range(5)])
+    cta_scene2 = [s for s in plan2.scenes if s.scene_type == "cta"][0]
+    assert cta_scene2.voiceover == "Call now for an inquiry. Contact details are on screen."
+
+
+def test_title_voiceover_tagline_dropped_if_too_long():
+    prop = _make_prop(num_features=3)
+    prop.name = "Maple Residency"
+    prop.property_type = "Independent House"
+    # Long tagline pushing total title VO over 18 words
+    prop.tagline = "Where luxury meets comfort in an expansive green setting surrounded by calm lakes"
+    plan = build_scene_plan(prop, [Path(f"img_{i}.jpg") for i in range(5)])
+
+    title_scene = plan.scenes[0]
+    # Tagline dropped from voiceover so voiceover stays <= 18 words
+    assert len(title_scene.voiceover.split()) <= 18
+    assert "calm lakes" not in title_scene.voiceover
+    assert "an independent house" in title_scene.voiceover
+    # Tagline is still kept on screen (in caption)
+    assert prop.tagline in title_scene.caption or prop.name in title_scene.caption
+
+    # Short tagline kept in voiceover
+    prop_short = _make_prop(num_features=3)
+    prop_short.name = "Maple Residency"
+    prop_short.property_type = "Independent House"
+    prop_short.tagline = "Feels like home"
+    plan_short = build_scene_plan(prop_short, [Path(f"img_{i}.jpg") for i in range(5)])
+    assert "Feels like home." in plan_short.scenes[0].voiceover
+
 

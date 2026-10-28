@@ -183,6 +183,43 @@ def calculate_durations(scenes_data: list[dict]) -> list[float]:
     return [round(d, 1) for d in durations]
 
 
+# ── Template Wording Helpers ───────────────────────────────────────────────
+
+def format_property_type(prop_type: str) -> str:
+    """Format property type with correct indefinite article (a/an) in lowercase.
+
+    Examples:
+        "Independent House" -> "an independent house"
+        "Apartment"         -> "an apartment"
+        "Villa"             -> "a villa"
+    """
+    clean = prop_type.strip().lower()
+    if not clean:
+        return ""
+    article = "an" if clean[0] in "aeiou" else "a"
+    return f"{article} {clean}"
+
+
+def format_feature_for_voiceover(feat: str) -> str:
+    """Format feature text for voiceover mid-sentence.
+
+    Lowercases the first letter unless it starts with a digit or an all-caps word.
+    Examples:
+        "Spacious kitchen" -> "spacious kitchen"
+        "24/7 Security"    -> "24/7 Security"
+        "CCTV cover"       -> "CCTV cover"
+    """
+    s = feat.strip()
+    if not s:
+        return s
+    first_word = s.split()[0]
+    if s[0].isdigit():
+        return s
+    if first_word.isupper() and len(first_word) >= 2:
+        return s
+    return s[0].lower() + s[1:]
+
+
 # ── Template Scene Builders ────────────────────────────────────────────────
 
 def _build_title_scene(prop: PropertyData) -> dict:
@@ -190,13 +227,24 @@ def _build_title_scene(prop: PropertyData) -> dict:
     if prop.tagline and len(prop.tagline) <= 38:
         caption_text = f"{prop.name}\n{prop.tagline}"
 
-    tagline_part = f" {prop.tagline}." if prop.tagline else ""
-    vo_variants = [
-        f"Welcome to {prop.name}, a {prop.property_type}.{tagline_part}",
-        f"Presenting {prop.name}, offering a {prop.property_type}.{tagline_part}",
-        f"Discover {prop.name}, a {prop.property_type}.{tagline_part}",
+    ptype = format_property_type(prop.property_type)
+    base_variants = [
+        f"Welcome to {prop.name}, {ptype}.",
+        f"Presenting {prop.name}, offering {ptype}.",
+        f"Discover {prop.name}, {ptype}.",
     ]
-    vo = _pick_variant(vo_variants, prop.name, "title")
+    base_vo = _pick_variant(base_variants, prop.name, "title")
+
+    if prop.tagline and prop.tagline.strip():
+        tagline_clean = prop.tagline.strip().rstrip(".!?,;:") + "."
+        candidate_vo = f"{base_vo} {tagline_clean}"
+        # Keep title voiceover to max 18 words; drop tagline from VO if too long
+        if len(candidate_vo.split()) <= 18:
+            vo = candidate_vo
+        else:
+            vo = base_vo
+    else:
+        vo = base_vo
 
     return {
         "scene_type": "title",
@@ -206,10 +254,11 @@ def _build_title_scene(prop: PropertyData) -> dict:
 
 
 def _build_feature_scene(prop: PropertyData, feat: str, idx: int) -> dict:
+    feat_text = format_feature_for_voiceover(feat).rstrip(".!?,;:")
     vo_variants = [
-        f"Featuring {feat}.",
-        f"Includes {feat}.",
-        f"Equipped with {feat}.",
+        f"Highlights include {feat_text}.",
+        f"Next up: {feat_text}.",
+        f"Also featured: {feat_text}.",
     ]
     vo = _pick_variant(vo_variants, prop.name, f"feat_{idx}")
 
@@ -239,21 +288,11 @@ def _build_price_location_scene(prop: PropertyData) -> dict:
 
 
 def _build_cta_scene(prop: PropertyData) -> dict:
-    if prop.contact:
-        caption_text = f"{prop.cta_text}\n{prop.contact}"
-        vo_variants = [
-            f"{prop.cta_text}. Contact {prop.contact}.",
-            f"{prop.cta_text} today at {prop.contact}.",
-            f"Get in touch at {prop.contact}. {prop.cta_text}.",
-        ]
-    else:
-        caption_text = prop.cta_text
-        vo_variants = [
-            f"{prop.cta_text}.",
-            f"{prop.cta_text} today.",
-            f"Reach out now. {prop.cta_text}.",
-        ]
-    vo = _pick_variant(vo_variants, prop.name, "cta")
+    caption_text = f"{prop.cta_text}\n{prop.contact}" if prop.contact else prop.cta_text
+    cta_clean = prop.cta_text.strip().rstrip(".!?,;:")
+    contact_part = " Contact details are on screen." if prop.contact else ""
+
+    vo = f"{cta_clean}.{contact_part}".strip()
 
     return {
         "scene_type": "cta",
