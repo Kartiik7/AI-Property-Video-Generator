@@ -76,11 +76,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to write generated scene plan JSON (default: output/script.json).",
     )
     p.add_argument(
+        "--no-video",
+        action="store_true",
+        help="Generate and print scene plan only, without rendering the video.",
+    )
+    p.add_argument(
+        "--size",
+        choices=["720p", "1080p"],
+        default="720p",
+        help="Video resolution: 720p (1280x720) or 1080p (1920x1080) (default: 720p).",
+    )
+    p.add_argument(
+        "--fps",
+        type=int,
+        default=24,
+        help="Video frame rate in frames per second (default: 24).",
+    )
+    p.add_argument(
         "--out",
         metavar="PATH",
-        default=str(BASE_DIR / "output" / "property_video.mp4"),
-        help="Output video path (default: output/property_video.mp4). "
-             "Unused in Phase 2.",
+        default=None,
+        help="Output video path (default: output/<property-name-slug>.mp4).",
     )
     return p
 
@@ -147,7 +163,6 @@ def print_scene_plan(plan) -> None:
     print(LINE)
 
     for i, s in enumerate(plan.scenes, 1):
-        # Format caption (could be 2 lines)
         cap_lines = s.caption.split("\n")
         first_cap = cap_lines[0] if cap_lines else ""
         dur_str = f"{s.duration:.1f}s"
@@ -165,7 +180,6 @@ def print_scene_plan(plan) -> None:
         for w in plan.warnings:
             print(f"  ⚠  {w}")
 
-    print(f"\nVideo generation: not implemented yet (Phase 3)")
     print(SEP)
 
 
@@ -177,13 +191,14 @@ def main() -> int:
 
     images_dir = Path(args.images)
 
+    import time
     from src.input_loader import load_from_json, load_interactive
     from src.script_generator import build_scene_plan
+    from src.video_builder import build_video, slugify
     import json
 
     if args.interactive:
         result = load_interactive(images_dir)
-        # Ctrl+C in interactive mode exits immediately without summary block
         if any("cancelled by user" in e.lower() or "ctrl+c" in e.lower() for e in result.errors):
             return 130
     else:
@@ -192,7 +207,6 @@ def main() -> int:
     print_summary(result)
 
     if not result.ok:
-        print("\nVideo generation: not implemented yet (Phase 3)")
         print("=" * 60)
         logger.warning(
             "Input validation failed with %d error(s).", len(result.errors)
@@ -214,6 +228,61 @@ def main() -> int:
         print(f"\n✓ Scene plan saved to: {script_out}")
     except Exception as exc:
         print(f"\n⚠ Could not save scene plan to '{script_out}': {exc}")
+
+    # Video rendering
+    if args.no_video:
+        print("\n✓ Skipping video rendering (--no-video flag set).")
+        return 0
+
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        slug = slugify(result.property.name)
+        out_path = BASE_DIR / "output" / f"{slug}.mp4"
+
+    res_tuple = (1920, 1080) if args.size == "1080p" else (1280, 720)
+
+    SEP = "=" * 70
+    print(f"\n{SEP}")
+    print(f"  RENDERING VIDEO ({args.size} [{res_tuple[0]}x{res_tuple[1]}] @ {args.fps} fps)")
+    print(SEP)
+
+    def progress_cb(cur: int, total: int, msg: str) -> None:
+        print(f"  Rendering scene {cur}/{total}...")
+
+    t0 = time.perf_counter()
+    try:
+        exported_path = build_video(
+            plan=plan,
+            prop=result.property,
+            out_path=out_path,
+            size=res_tuple,
+            fps=args.fps,
+            progress_cb=progress_cb,
+        )
+        render_time = time.perf_counter() - t0
+    except Exception as exc:
+        logger.exception("Video rendering error: %s", exc)
+        print(f"\n[ERROR] Video generation failed: {exc}")
+        print("Details have been written to logs/app.log")
+        return 1
+
+    file_size_bytes = exported_path.stat().st_size
+    file_size_mb = file_size_bytes / (1024 * 1024)
+
+    print(f"\n{SEP}")
+    print("  VIDEO GENERATION COMPLETE")
+    print(SEP)
+    print(f"  Output file : {exported_path}")
+    print(f"  Duration    : {plan.total_duration}s")
+    print(f"  Resolution  : {res_tuple[0]}x{res_tuple[1]} ({args.size})")
+    print(f"  File size   : {file_size_mb:.2f} MB ({file_size_bytes:,} bytes)")
+    print(f"  Render time : {render_time:.1f}s")
+    print("\n  To view the video:")
+    print(f'    Windows (PowerShell): Start-Process "{exported_path}"')
+    print(f'    macOS               : open "{exported_path}"')
+    print(f'    Linux               : xdg-open "{exported_path}"')
+    print(SEP)
 
     return 0
 

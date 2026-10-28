@@ -4,10 +4,37 @@ A Python tool that takes property details and 4–8 images and exports a polishe
 20–40 second promotional MP4 with text overlays, transitions, and optional
 narration/background music.
 
-> **Phase 2 complete** — input validation, storyboard/script generation, and fact checking.
-> Video generation will be added in Phase 3.
+> **Phase 3 complete** — video rendering with text overlays, Ken Burns motion, and transitions.
+> Audio/TTS narration will be attached in Phase 4.
 
 ---
+
+## Generating the Video
+
+Build a silent promotional MP4 directly from property data and images:
+
+```bash
+# House 1 (Maple Residency)
+python main.py --data input/samples/house_1/property.json --images input/samples/house_1/images
+
+# House 2 (Cedar Park Villa)
+python main.py --data input/samples/house_2/property.json --images input/samples/house_2/images
+```
+
+### Video Options & Flags
+
+- `--out <path>`: Destination MP4 file (defaults to `output/<slug>.mp4`, e.g. `output/maple_residency.mp4`).
+- `--size 720p|1080p`: Video resolution — `720p` (1280×720, default) or `1080p` (1920×1080).
+- `--fps <int>`: Render frame rate (default: `24`).
+- `--no-video`: Generate and save the scene plan only without rendering MP4.
+
+```bash
+# Render in 1080p at 30 fps to custom output
+python main.py --data input/samples/house_1/property.json --images input/samples/house_1/images --size 1080p --fps 30 --out output/high_res.mp4
+
+# Skip video generation, inspect plan only
+python main.py --data input/samples/house_1/property.json --images input/samples/house_1/images --no-video
+```
 
 ## Usage
 
